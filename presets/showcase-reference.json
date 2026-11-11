@@ -1,0 +1,41 @@
+{
+  "name": "Reference brightness showcase v2",
+  "look": {
+    "expo": 3.0,
+    "white": 1.0,
+    "bloom": 0.51,
+    "width": 0.4,
+    "density": 10.0,
+    "dim": 1.0,
+    "metal": 0.0,
+    "env": 2.2,
+    "specular": 1.5,
+    "emission": 0.55,
+    "light": 3.35,
+    "lrange": 0.2,
+    "ambient": 0.0,
+    "reflect": 1.0,
+    "arch": 2.0,
+    "lattice": 2.0,
+    "beams": 2.0
+  },
+  "motion": {
+    "speed": 1.15,
+    "turb": 1.35,
+    "orbit": 1.0,
+    "cameraDistance": 0.5,
+    "fov": 58.0
+  },
+  "notes": "Exposure, white ceiling, bloom, width, density and master brightness read from the reference. Light/range/ambient/metal/structures estimated from knob positions. Camera and motion are independently composed for the nine-scene showcase; width varies only from 0.40 to 0.48. Per-scene export exposure compensation aligns bright wire highlights to the reference (target P99 around 0.88); this is additional to the screenshot base Exposure 3.0.",
+  "exportExposureCompensation": [
+    3.8,
+    1.833,
+    1.487,
+    2.256,
+    2.457,
+    2.561,
+    2.775,
+    1.487,
+    2.775
+  ]
+}

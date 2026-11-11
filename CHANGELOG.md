@@ -1,8 +1,8 @@
 # Changelog
 
-## strings-space-v1.0.0 — 2026-11-12
+## v1.0.0 — 2026-11-12
 
-STRINGS SPACE 的第一个独立版本，发布于 `strings-space` 分支。原有 `main` 分支保持原版本。
+STRINGS SPACE 的首个独立仓库版本，发布于 `kuanfuweimu/strings-space` 的 `main` 分支。原 `kuanfuweimu/strings-web` 仓库继续保留。
 
 - 增加空间网格、拱形结构、线束、移动灯光与地面镜像反射。
 - 增加金属材质面板：粗糙度、拉丝、高光、环境反射、反射方向、灯带宽度、冷暖与自发光。

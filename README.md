@@ -1,6 +1,8 @@
 # STRINGS SPACE · v1.0.0
 
-独立空间版本：在 STRINGS 基础上增加空间结构、灯光、金属材质、地面反射与生长镜头追踪。默认服务端口是 **8788**。开发分支为 `strings-space`，本次版本标签为 `strings-space-v1.0.0`；主分支 `main` 继续提供原有 STRINGS 版本。
+独立空间版本：在 STRINGS 基础上增加空间结构、灯光、金属材质、地面反射与生长镜头追踪。默认服务端口是 **8788**。本项目独立维护于 [kuanfuweimu/strings-space](https://github.com/kuanfuweimu/strings-space)，默认分支为 `main`，首个独立仓库版本为 `v1.0.0`。原版继续维护于 [strings-web](https://github.com/kuanfuweimu/strings-web)。
+
+渲染使用实时金属着色、程序化环境反射和地面镜像，不包含硬件光线追踪。
 
 ## 材质与镜头更新
 
@@ -30,7 +32,7 @@
 
 运行 `node --test tests/material-tracking.test.js` 可检查材质参数、0.2 秒平滑、追踪退回逻辑、异步读取与脚本语法。另在 RTX 4080 Laptop 上用独立 OpenGL 离屏环境编译了全部七组着色器，运行实际 GPU 生长模拟并渲染新旧材质；该检查不是浏览器或 TouchDesigner 的实机帧率测试。
 
-本版本提供浏览器输出；TouchDesigner 接入口见 `main` 分支，本分支暂未集成。
+本版本提供浏览器输出；TouchDesigner 接入口目前位于原版 [strings-web](https://github.com/kuanfuweimu/strings-web)，尚未集成到 SPACE。
 
 **实时线条视觉、独立控制面板与现场输入控制。**
 
@@ -66,7 +68,7 @@ STRINGS 在浏览器中模拟流动、生长与聚散的线条，用于投影内
 - 仓库内的启动与导出脚本面向 Windows；其他平台可手动运行 Node 服务。
 
 ```sh
-git clone --branch strings-space --single-branch https://github.com/kuanfuweimu/strings-web.git strings-space
+git clone https://github.com/kuanfuweimu/strings-space.git
 cd strings-space
 node server.js
 ```
@@ -201,6 +203,8 @@ strings-space/
 ```
 
 `out/` 导出视频、`shots/` 开发测试素材、`browser-profile/` 浏览器个人数据均不纳入 Git。本仓库仅包含网页工程。
+
+参考 showcase 的亮度与镜头参数记录在 `presets/showcase-reference.json`，包含逐场景的离屏曝光补偿；该文件是渲染参数记录，不会自动改变实时页面的默认值。
 
 ## 使用说明
 
