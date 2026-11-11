@@ -2,12 +2,12 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>STRINGS · output</title>
+<title>STRINGS SPACE · output</title>
 <style>
   html,body{margin:0;height:100%;background:#000;overflow:hidden}
   canvas{display:block;width:100vw;height:100vh;object-fit:contain}
   #hud{position:fixed;left:18px;bottom:14px;font:12px/1.6 ui-monospace,Consolas,monospace;color:#8a8a8a;
-       letter-spacing:.06em;user-select:none;transition:opacity .6s}
+       letter-spacing:.06em;user-select:none;transition:opacity .2s}
   #hud b{color:#ddd;font-weight:500}
   #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#f66;font:14px monospace;white-space:pre-wrap;padding:40px}
 </style>
@@ -16,6 +16,9 @@
 <canvas id="c"></canvas>
 <div id="hud"></div>
 <div id="err"></div>
+<script src="materials.js"></script>
+<script src="growth-tracker.js"></script>
+<script src="parameter-lag.js"></script>
 <script>
 'use strict';
 const q = new URLSearchParams(location.search);
@@ -33,26 +36,45 @@ if(!gl.getExtension('EXT_color_buffer_float')) fail('EXT_color_buffer_float not 
 
 // ---------- scenes ----------
 const KEYS=['na','nf','ns','swirl','rad','radAx','up','pull','lifeMin','lifeRange','spawn','pulseAmt','advect','len','glow','width',
-            'hist','speed','pulseHz','expo','fish','camD','camH','orbit','lookY','chase'];
+            'hist','speed','pulseHz','expo','fish','camD','camH','orbit','lookY','chase','gFloor','gArch','gLattice','gBeams'];
 const DEF={na:.3,nf:.7,ns:.05,swirl:0,rad:0,radAx:0,up:0,pull:.6,lifeMin:4,lifeRange:5,spawn:1,pulseAmt:0,advect:.25,len:1,glow:.2,width:1.1,
-           hist:24,speed:1,pulseHz:.25,expo:1,fish:0,camD:3.0,camH:.25,orbit:.035,lookY:-.05,chase:0};
+           hist:24,speed:1,pulseHz:.25,expo:1,fish:0,camD:3.0,camH:.25,orbit:.035,lookY:-.05,chase:0,gFloor:1,gArch:0,gLattice:0,gBeams:0};
 const NP=KEYS.length;
 const S=(name,mode,o)=>({name,mode,P:KEYS.map(k=>(k in o?o[k]:DEF[k]))});
 const SCENES=[
-  S('VORTEX 漩涡',0,{na:.3,swirl:.55,radAx:.24,spawn:1.2,hist:20,glow:.15}),
-  S('GROWTH 生长',1,{camD:3.7,na:.42,nf:.8,ns:.03,swirl:.08,up:.3,pull:.5,lifeMin:7,lifeRange:6,spawn:.5,pulseAmt:.7,advect:.04,glow:.9,width:1.2,hist:10,pulseHz:.18,expo:1.1}),
-  S('PULSE 脉冲',2,{na:.28,nf:1,ns:.06,swirl:.22,rad:.42,pull:.8,lifeMin:3,lifeRange:3,spawn:3,pulseAmt:1,advect:.35,len:.85,glow:1,pulseHz:.3,expo:1.2}),
-  S('DRIFT 漂流',3,{na:.5,nf:.6,ns:.04,swirl:.12,pull:.8,lifeMin:5,lifeRange:6,advect:.6,len:.4,glow:.25,width:1.3,expo:2.2}),
-  S('VEIL 帷幕',4,{camD:3.7,na:.22,nf:.9,ns:.04,swirl:.05,up:-.38,pull:.2,lifeMin:8,lifeRange:4,spawn:.8,pulseAmt:.5,pulseHz:.15,advect:.12,glow:.6,hist:12,expo:1.2}),
-  S('RIBBON 丝带',5,{na:.25,nf:.8,chase:1.3,pull:.3,lifeMin:9,lifeRange:6,advect:.1,glow:.35,camD:3.2,expo:1.2}),
-  S('DOME 穹顶 · fisheye',6,{fish:1,na:.2,swirl:.7,radAx:-.16,pull:.3,lifeMin:6,lifeRange:5,spawn:1.2,advect:.3,hist:16,camD:.35,camH:-1.5,lookY:1,orbit:.05,expo:1.3}),
-  S('CANOPY 林冠 · fisheye',7,{fish:1,na:.4,nf:.8,ns:.03,swirl:.1,radAx:-.05,up:.34,pull:.5,lifeMin:8,lifeRange:6,spawn:.5,pulseAmt:.6,advect:.04,glow:.9,width:1.2,hist:10,pulseHz:.18,camD:.3,camH:-1.35,lookY:1,orbit:.03,expo:1.2}),
-  S('NEBULA 星云 · fisheye',3,{fish:1,na:.55,nf:.5,swirl:.2,pull:.8,lifeMin:6,lifeRange:6,advect:.5,glow:.4,camD:.5,camH:0,lookY:.2,orbit:.06,expo:1.0}),
+  S('VORTEX 漩涡',0,{gBeams:.8,gArch:.6,camH:.1,na:.3,swirl:.55,radAx:.24,spawn:1.2,hist:20,glow:.15}),
+  S('GROWTH 生长',1,{gLattice:1,camD:3.7,na:.42,nf:.8,ns:.03,swirl:.08,up:.3,pull:.5,lifeMin:7,lifeRange:6,spawn:.5,pulseAmt:.7,advect:.04,glow:.9,width:1.2,hist:10,pulseHz:.18,expo:1.1}),
+  S('PULSE 脉冲',2,{gArch:.75,na:.28,nf:1,ns:.06,swirl:.22,rad:.42,pull:.8,lifeMin:3,lifeRange:3,spawn:3,pulseAmt:1,advect:.35,len:.85,glow:1,pulseHz:.3,expo:1.2}),
+  S('DRIFT 漂流',3,{gLattice:.7,gFloor:.7,na:.5,nf:.6,ns:.04,swirl:.12,pull:.8,lifeMin:5,lifeRange:6,advect:.6,len:.4,glow:.25,width:1.3,expo:2.2}),
+  S('VEIL 帷幕',4,{gBeams:1,camD:3.7,na:.22,nf:.9,ns:.04,swirl:.05,up:-.38,pull:.2,lifeMin:8,lifeRange:4,spawn:.8,pulseAmt:.5,pulseHz:.15,advect:.12,glow:.6,hist:12,expo:1.2}),
+  S('RIBBON 丝带',5,{gArch:.8,na:.25,nf:.8,chase:1.3,pull:.3,lifeMin:9,lifeRange:6,advect:.1,glow:.35,camD:3.2,expo:1.2}),
+  S('DOME 穹顶 · fisheye',6,{gArch:.55,fish:1,na:.2,swirl:.7,radAx:-.16,pull:.3,lifeMin:6,lifeRange:5,spawn:1.2,advect:.3,hist:16,camD:.35,camH:-1.5,lookY:1,orbit:.05,expo:1.3}),
+  S('CANOPY 林冠 · fisheye',7,{gLattice:1,fish:1,na:.4,nf:.8,ns:.03,swirl:.1,radAx:-.05,up:.34,pull:.5,lifeMin:8,lifeRange:6,spawn:.5,pulseAmt:.6,advect:.04,glow:.9,width:1.2,hist:10,pulseHz:.18,camD:.3,camH:-1.35,lookY:1,orbit:.03,expo:1.2}),
+  S('NEBULA 星云 · fisheye',3,{gBeams:.8,gArch:.5,gFloor:.6,fish:1,na:.55,nf:.5,swirl:.2,pull:.8,lifeMin:6,lifeRange:6,advect:.5,glow:.4,camD:.5,camH:0,lookY:.2,orbit:.06,expo:1.0}),
 ];
 // live globals, driven by control.html over BroadcastChannel
-const G={dim:1,expo:1,white:.88,bloom:1,width:1,speed:1,turb:1,density:+(q.get('density')||3),fish:-1,orbit:1,pulse:1,trans:3.5,dur:45,camD:1,camH:0,yaw:0,lookY:0,fov:50,auto:q.get('auto')!=='0',hud:q.get('hud')==='1'};
+const G={dim:1,expo:1,white:.88,bloom:1,width:1,speed:1,turb:1,density:+(q.get('density')||3),fish:-1,orbit:1,pulse:1,trans:3.5,dur:45,light:1,lrange:1,lspeed:1,ambient:1,metal:1,reflect:1,gfloor:1,arch:1,lattice:1,beams:1,camD:1,camH:0,yaw:0,lookY:0,fov:50,auto:q.get('auto')!=='0',hud:q.get('hud')==='1'};
+Object.assign(G,StringsMaterials.defaults,{follow:q.get('follow')==='1',followStrength:.8,followSmooth:1.8,trans:.2});
+const requestedMaterial=StringsMaterials.presets[q.get('material')];
+if(requestedMaterial) Object.assign(G,requestedMaterial.values);
+Object.assign(G,StringsMaterials.sanitize(Object.fromEntries([...q].filter(([k])=>k in StringsMaterials.ranges).map(([k,v])=>[k,Number(v)]))));
+const controls=new ParameterLag(G,.2);
 
 // ---------- shaders ----------
+const FLOOR = -1.55;
+const PROJ = `
+uniform mat4 uV; uniform float uF,uAspect,uFish;
+// returns ndc.xy, distance; ok=0 when the point cannot be shown
+vec3 proj(vec3 p,out float ok){
+  vec3 v=(uV*vec4(p,1.)).xyz; float d=length(v), z=-v.z;
+  vec2 pp=v.xy*uF/max(z,.05);
+  float th=acos(clamp(z/max(d,1e-5),-1.,1.)), rl=length(v.xy);
+  vec2 fp=rl>1e-5?v.xy/rl*th/1.2217:vec2(0.);
+  ok=(uFish<.999?step(.15,z):1.)*step(th,2.7)*step(.05,d);
+  vec2 n=mix(pp,fp,uFish); n.x/=uAspect;
+  return vec3(n,d);
+}`;
+// Strings and the static structure share this program: uStruct selects the texture layout.
 const VS_FULL = `#version 300 es
 void main(){ vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position=vec4(p*2.-1.,0,1); }`;
 
@@ -63,6 +85,7 @@ uniform float uT,uDt,uShift,uSeed,uMode,uActive;
 uniform float uP[${NP}];
 out vec4 o;
 const int SEGC=${SEG}, ROWS=${ROWS};
+const float FLOOR=${FLOOR}+.015;
 float h1(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
 vec3 h3(vec2 p){ return vec3(h1(p),h1(p+17.1),h1(p+41.7)); }
 const mat3 R=mat3(0.,.8,.6,-.8,.36,-.48,-.6,-.48,.64);
@@ -128,58 +151,188 @@ void main(){
       float env=mix(1., pow(.5+.5*cos(6.2832*uT*uP[18]),8.)*6., uP[11]);
       if(h1(vec2(id,uSeed))<uP[10]*uDt*env) s=vec4(spawn(h3(vec2(id,uSeed+3.7))),0.);
     }else{
-      s.xyz+=vel(s.xyz,id)*sp*uDt; s.w+=uDt;
+      s.xyz+=vel(s.xyz,id)*sp*uDt; s.y=max(s.y,FLOOR); s.w+=uDt;
       if(s.w>uP[8]+uP[9]*h1(vec2(id,11.))) s.w=-1.;
     }
     o=s;
   }else{
     vec4 s=uShift>.5?texelFetch(uS,c-ivec2(1,0),0):texelFetch(uS,c,0);
-    if(s.w>=0.) s.xyz+=(vel(s.xyz,id)-uP[25]*(emitter()-s.xyz))*sp*uDt*uP[12];
+    if(s.w>=0.){ s.xyz+=(vel(s.xyz,id)-uP[25]*(emitter()-s.xyz))*sp*uDt*uP[12]; s.y=max(s.y,FLOOR); }
     o=s;
   }
 }`;
 
 const VS_LINE = `#version 300 es
-precision highp float;
-uniform sampler2D uS; uniform mat4 uV; uniform vec2 uRes; uniform float uT,uPx,uF,uAspect,uDens;
+precision highp float; precision highp int;
+uniform sampler2D uS; uniform vec2 uRes; uniform float uT,uPx,uStruct,uMirror,uFloorY;
+uniform vec4 uLayer; uniform ivec4 uLayerEnd;
 uniform float uP[${NP}];
-out float vA; out float vSide;
+out vec3 vPos; out vec3 vT; out float vSide; out float vEm; out float vAlb; out float vFade;
 const int ROWS=${ROWS};
 float h1(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
-// returns ndc.xy, distance; ok=0 when the point cannot be shown
-vec3 proj(vec3 p,out float ok){
-  vec3 v=(uV*vec4(p,1.)).xyz; float d=length(v), z=-v.z, fish=uP[20];
-  vec2 pp=v.xy*uF/max(z,.05);
-  float th=acos(clamp(z/max(d,1e-5),-1.,1.)), rl=length(v.xy);
-  vec2 fp=rl>1e-5?v.xy/rl*th/1.2217:vec2(0.);
-  ok=(fish<.999?step(.15,z):1.)*step(th,2.7)*step(.05,d);
-  vec2 n=mix(pp,fp,fish); n.x/=uAspect;
-  return vec3(n,d);
-}
+${PROJ}
 void main(){
   const int S=${SEG};
   int k=gl_InstanceID%(S-1), i=gl_InstanceID/(S-1);
-  ivec2 t=ivec2((i/ROWS)*S+k,i%ROWS);
+  bool st=uStruct>.5;
+  ivec2 t=st?ivec2(k,i):ivec2((i/ROWS)*S+k,i%ROWS);
   vec4 a=texelFetch(uS,t,0), b=texelFetch(uS,t+ivec2(1,0),0);
   float side=(gl_VertexID&1)==0?-1.:1., end=gl_VertexID<2?0.:1.;
-  float oka,okb; vec3 na=proj(a.xyz,oka), nb=proj(b.xyz,okb);
+  vec3 pa=a.xyz, pb=b.xyz;
+  if(uMirror>0.){ pa.y=2.*uFloorY-pa.y; pb.y=2.*uFloorY-pb.y; }
+  float oka,okb; vec3 na=proj(pa,oka), nb=proj(pb,okb);
   bool ok=a.w>=0.&&b.w>=0.&&a.w>=b.w&&oka*okb>.5;
-  if(!ok){ gl_Position=vec4(2.,2.,2.,1.); vA=0.; vSide=0.; return; }
+  float id=float(i), u=(float(k)+end)/float(S), amt=1.; int layer=-1;
+  if(st){ layer=i<uLayerEnd.x?0:i<uLayerEnd.y?1:i<uLayerEnd.z?2:3; amt=uLayer[layer]; ok=ok&&amt>.002&&!(uMirror>0.&&layer==0); }
+  if(!ok){ gl_Position=vec4(2.,2.,2.,1.); vPos=vec3(0.); vT=vec3(1.,0.,0.); vSide=0.; vEm=0.; vAlb=0.; vFade=0.; return; }
   vec2 d=(nb.xy-na.xy)*uRes; float L=length(d);
   vec2 n=L>1e-4?vec2(-d.y,d.x)/L:vec2(0.,1.);
   vec3 cp=mix(na,nb,end);
-  float wpx=uP[15]*uPx*clamp(3.6/cp.z,.5,2.5);
-  gl_Position=vec4(cp.xy+n*side*wpx/uRes,0.,1.);
-  float id=float(i), u=(float(k)+end)/float(S), age=mix(a.w,b.w,end);
-  float fade=smoothstep(uP[13],uP[13]*.55,u)*smoothstep(0.,.25,age+u);
-  float pulse=1.+uP[14]*5.*pow(.5+.5*sin(age*2.2-uT*1.8+h1(vec2(id,5.))*1.5),14.);
-  float depth=exp(-.32*max(cp.z-2.4,0.));
-  vA=fade*pulse*depth*(.25+.75*h1(vec2(id,2.)))*.2*uDens;
-  vSide=side;
+  float fade,em,alb,wm=1.;
+  if(st){
+    float h=h1(vec2(id,71.));
+    fade=smoothstep(0.,.06,amt*1.4-u-.3*h);                       // lines grow in from their start as the layer comes up
+    em=uP[14]*.8*pow(.5+.5*sin(u*7.-uT*1.3+h*6.2832),30.);
+    alb=(layer==0?1.1:mix(.25,1.1,h))*min(amt,1.5); wm=layer==0?.7:mix(.7,1.3,h1(vec2(id,13.)));
+    if(layer==0) fade*=exp(-mix(.07,.45,uFish)*cp.z);
+  }else{
+    float age=mix(a.w,b.w,end);
+    fade=smoothstep(uP[13],uP[13]*.55,u)*smoothstep(0.,.25,age+u);
+    em=uP[14]*1.1*pow(.5+.5*sin(age*2.2-uT*1.8+h1(vec2(id,5.))*1.5),14.);
+    alb=mix(.05,1.,pow(h1(vec2(id,2.)),1.5));
+  }
+  float wpx=uP[15]*uPx*wm*clamp(3.6/cp.z,.5,2.5)*mix(.35,1.,fade);
+  gl_Position=vec4(cp.xy+n*side*wpx/uRes,clamp(cp.z/60.,0.,1.)*2.-1.,1.);
+  vec3 wp=mix(a.xyz,b.xyz,end);
+  float fog=exp(-.2*max(cp.z-2.6,0.));
+  float mir=uMirror>0.?uMirror*exp(-max(wp.y-uFloorY,0.)*.7):1.;
+  vec3 tangent=b.xyz-a.xyz;
+  vec4 prev=texelFetch(uS,t-ivec2(k>0?1:0,0),0);
+  vec4 next=texelFetch(uS,t+ivec2(k<S-2?2:1,0),0);
+  vec3 ta=k>0&&prev.w>=a.w?b.xyz-prev.xyz:tangent;
+  vec3 tb=k<S-2&&next.w>=0.&&b.w>=next.w?next.xyz-a.xyz:tangent;
+  vPos=wp; vT=mix(ta/max(length(ta),.000001),tb/max(length(tb),.000001),end); vSide=side; vEm=em; vAlb=alb; vFade=fade*fog*mir;
 }`;
+// Metal wire: each ribbon is shaded as a cylinder (normal swept across its width) under three point lights,
+// plus a strand highlight along the tangent and a simple studio environment for the metallic gleam.
 const FS_LINE = `#version 300 es
-precision highp float; in float vA; in float vSide; out vec4 o;
-void main(){ float e=1.-vSide*vSide; o=vec4(vec3(vA*e),1.); }`;
+precision highp float;
+in vec3 vPos; in vec3 vT; in float vSide; in float vEm; in float vAlb; in float vFade;
+uniform vec3 uCam; uniform vec4 uL[3]; uniform float uAmb,uMetal,uRange;
+uniform float uRoughness,uAnisotropy,uSpecular,uEnv,uEnvAngle,uEnvWidth,uWarmth,uEmission,uLegacy;
+out vec4 o;
+float legacy(vec3 T,vec3 V,vec3 N){
+  float sh=mix(10.,80.,clamp(uMetal*.5,0.,1.)), c=0.;
+  for(int l=0;l<4;l++){
+    vec3 Ld; float att;
+    if(l<3){ vec3 Lv=uL[l].xyz-vPos; float d2=dot(Lv,Lv); Ld=Lv*inversesqrt(d2+1e-6); att=uL[l].w/(1.+d2*uRange); }
+    else{ Ld=normalize(vec3(.35,.8,.45)); att=.45*uAmb; }      // fixed overhead key so the room stays readable away from the moving lights
+    vec3 Hh=normalize(Ld+V); float nl=max(dot(N,Ld),0.);
+    float th=dot(T,Hh), kk=pow(max(1.-th*th,0.),sh*.5), sp=pow(max(dot(N,Hh),0.),sh);
+    c+=att*(.18*nl+uMetal*(.6*kk*(.2+.8*nl)+1.4*sp));
+  }
+  vec3 R=reflect(-V,N);
+  float env=smoothstep(.35,.95,R.y)*.5+pow(1.-abs(R.y),8.)*.25;
+  float rim=pow(1.-max(dot(N,V),0.),3.);
+  c+=uAmb*(.04+uMetal*.1*env+.06*rim);
+  c=c*vAlb+vEm;
+  return c;
+}
+float softbox(vec3 r,vec3 forward,vec3 up,vec2 size,float blur){
+  vec3 side=normalize(cross(forward,up)); up=cross(side,forward);
+  float facing=dot(r,forward);
+  vec2 p=vec2(dot(r,side),dot(r,up))/max(facing,.03);
+  vec2 aa=max(fwidth(p)*.6,vec2(.002));
+  vec2 mask=1.-smoothstep(size-aa,size+vec2(blur)+aa,abs(p));
+  return mask.x*mask.y*smoothstep(0.,.15,facing);
+}
+vec3 studio(vec3 r,float rough){
+  float a=radians(uEnvAngle), c=cos(a), s=sin(a);
+  r=vec3(c*r.x-s*r.z,r.y,s*r.x+c*r.z);
+  float blur=rough*rough*.7;
+  float key=softbox(r,normalize(vec3(.7,.35,.7)),vec3(0,1,0),vec2(uEnvWidth,.95),blur);
+  float fill=softbox(r,normalize(vec3(-.65,.25,.7)),vec3(0,1,0),vec2(uEnvWidth*.65,.7),blur);
+  float top=softbox(r,normalize(vec3(0,1,-.25)),vec3(0,0,1),vec2(.85,uEnvWidth),blur);
+  return vec3(.014+.035*smoothstep(-.2,.8,r.y))+key*vec3(2.4,2.48,2.6)+fill*vec3(1.45,1.38,1.28)+top*1.6;
+}
+vec3 fresnel(float cosTheta,vec3 f0){ return f0+(1.-f0)*pow(1.-clamp(cosTheta,0.,1.),5.); }
+void main(){
+  if(vFade<.004 || dot(vT,vT)<1e-12) discard;
+  vec3 T=normalize(vT), V=normalize(uCam-vPos);
+  vec3 B=cross(T,V);
+  if(dot(B,B)<1e-8) B=cross(T,abs(T.y)<.9?vec3(0,1,0):vec3(1,0,0));
+  B=normalize(B);
+  vec3 Nf=normalize(cross(B,T));
+  float side=clamp(vSide,-.999,.999);
+  vec3 N=normalize(B*side+Nf*sqrt(1.-side*side));
+  if(uLegacy>.999){ o=vec4(vec3(legacy(T,V,N)*vFade),1.); return; }
+  B=normalize(cross(N,T));
+  float metal=clamp(uMetal,0.,1.), rough=clamp(uRoughness,.08,1.);
+  // Specular anti-aliasing for thin subpixel wires. No extra geometry/pass.
+  float variance=min(.06,.12*(dot(dFdx(N),dFdx(N))+dot(dFdy(N),dFdy(N))));
+  float alpha=max(.012,rough*rough+variance);
+  float at=max(.012,alpha*(1.+uAnisotropy)), ab=max(.012,alpha*(1.-uAnisotropy));
+  vec3 tint=mix(vec3(.65,.76,.9),vec3(.94,.76,.53),uWarmth*.5+.5);
+  vec3 base=tint*mix(.48,.95,clamp(vAlb,0.,1.));
+  vec3 f0=mix(vec3(.04),base,metal), color=vec3(0.);
+  float nv=max(dot(N,V),.001), tv=dot(T,V), bv=dot(B,V);
+  for(int l=0;l<4;l++){
+    vec3 L; float att;
+    if(l<3){ vec3 v=uL[l].xyz-vPos; float d2=dot(v,v); L=v*inversesqrt(d2+1e-6); att=uL[l].w/(1.+d2*uRange); }
+    else{ L=normalize(vec3(.35,.8,.45)); att=.45*uAmb; }
+    vec3 H=normalize(L+V); float nl=max(dot(N,L),0.), nh=max(dot(N,H),0.);
+    vec3 h=vec3(dot(T,H)/at,dot(B,H)/ab,nh);
+    float d=1./max(3.14159265*at*ab*pow(dot(h,h),2.),.000001);
+    float lv=nl*length(vec3(at*tv,ab*bv,nv));
+    float ll=nv*length(vec3(at*dot(T,L),ab*dot(B,L),nl));
+    float vis=.5/max(lv+ll,.0001);
+    vec3 F=fresnel(dot(V,H),f0);
+    color+=att*nl*((1.-metal)*(1.-F)*base/3.14159265+min(F*d*vis,vec3(12.))*uSpecular);
+  }
+  vec3 reflected=reflect(-V,N);
+  color+=studio(reflected,rough)*fresnel(nv,f0)*uEnv*uSpecular*mix(1.,.55,rough);
+  color+=base*(1.-metal)*uAmb*.045;
+  color+=vec3(vEm*uEmission);
+  if(uLegacy>.001) color=mix(color,vec3(legacy(T,V,N)),uLegacy);
+  o=vec4(color*vFade,1.);
+}`;
+const VS_DOT = `#version 300 es
+precision highp float;
+uniform vec4 uL[3]; uniform float uPx,uMirror,uFloorY;
+out float vI;
+${PROJ}
+void main(){
+  vec4 l=uL[gl_VertexID]; vec3 p=l.xyz; if(uMirror>0.) p.y=2.*uFloorY-p.y;
+  float ok; vec3 n=proj(p,ok);
+  gl_Position=ok>.5?vec4(n.xy,clamp(n.z/60.,0.,1.)*2.-1.,1.):vec4(2.,2.,2.,1.);
+  gl_PointSize=clamp(uPx*70./max(n.z,.25),4.,260.);
+  vI=min(l.w,3.)*(uMirror>0.?uMirror*.5:1.);
+}`;
+const FS_DOT = `#version 300 es
+precision highp float; in float vI; out vec4 o;
+void main(){ float r=length(gl_PointCoord-.5)*2.; float g=(exp(-r*r*60.)*5.+exp(-r*r*6.)*.35)*smoothstep(1.,.6,r); o=vec4(vec3(g*vI),1.); }`;
+
+// Floor surface: a ray-cast plane that catches pools of light and a soft sheen, so the ground reads as a surface and not only as a grid.
+const FS_FLOOR = `#version 300 es
+precision highp float;
+uniform mat4 uV; uniform float uF,uAspect,uFish,uFloorY,uRange,uAmt; uniform vec2 uInv; uniform vec3 uCam; uniform vec4 uL[3];
+out vec4 o;
+void main(){
+  vec2 n=(gl_FragCoord.xy*uInv*2.-1.)*vec2(uAspect,1.);
+  float rl=length(n), th=rl*1.2217;
+  vec3 vp=normalize(vec3(n/uF,-1.)), vf=vec3(rl>1e-5?n/rl*sin(th):vec2(0.),-cos(th));
+  if(uFish>.5&&th>2.7) discard;
+  vec3 dir=normalize(transpose(mat3(uV))*mix(vp,vf,uFish));
+  if(dir.y>-1e-4) discard;
+  float t=(uFloorY-uCam.y)/dir.y; vec3 p=uCam+dir*t, V=-dir; float c=0.;
+  for(int l=0;l<3;l++){
+    vec3 Lv=uL[l].xyz-p; float d2=dot(Lv,Lv); vec3 Ld=Lv*inversesqrt(d2+1e-6);
+    float att=uL[l].w/(1.+d2*uRange); vec3 Hh=normalize(Ld+V);
+    c+=att*(.02*Ld.y+.22*pow(max(Hh.y,0.),60.));
+  }
+  gl_FragDepth=clamp(t/60.,0.,1.);
+  o=vec4(vec3(c*uAmt*exp(-.2*max(t-2.6,0.))),1.);
+}`;
 
 const FS_GAUSS = `#version 300 es
 precision highp float; uniform sampler2D uTex; uniform vec2 uStep; uniform vec2 uInv; out vec4 o;
@@ -195,7 +348,7 @@ precision highp float; uniform sampler2D uScene,uB1,uB3; uniform vec2 uInv; unif
 void main(){
   vec2 uv=gl_FragCoord.xy*uInv;
   vec3 c=texture(uScene,uv).rgb+(texture(uB1,uv).rgb*.35+texture(uB3,uv).rgb*.5)*uBloom;
-  c*=uExp; c=c/(1.+c)*uWhite;
+  c*=uExp; c=c*c/(c+.1); c=c/(1.+c)*uWhite;   // toe keeps the unlit side of the wires near black
   vec2 q=uv-.5; c*=1.-.8*dot(q,q);
   o=vec4(c*uDim,1.);
 }`;
@@ -207,7 +360,7 @@ function prog(vs,fs){ const p=gl.createProgram(); gl.attachShader(p,sh(gl.VERTEX
   const u={}; const n=gl.getProgramParameter(p,gl.ACTIVE_UNIFORMS);
   for(let i=0;i<n;i++){ const nm=gl.getActiveUniform(p,i).name.replace('[0]',''); u[nm]=gl.getUniformLocation(p,nm); }
   return {p,u}; }
-const pSim=prog(VS_FULL,FS_SIM), pLine=prog(VS_LINE,FS_LINE), pGauss=prog(VS_FULL,FS_GAUSS), pComp=prog(VS_FULL,FS_COMP);
+const pSim=prog(VS_FULL,FS_SIM), pLine=prog(VS_LINE,FS_LINE), pDot=prog(VS_DOT,FS_DOT), pFloor=prog(VS_FULL,FS_FLOOR), pGauss=prog(VS_FULL,FS_GAUSS), pComp=prog(VS_FULL,FS_COMP);
 
 function target(w,h,ifmt,fmt,type,filter,data){
   const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
@@ -222,14 +375,65 @@ const SW=SEG*COLS;
 const init=new Float32Array(SW*ROWS*4); for(let i=3;i<init.length;i+=4) init[i]=-1;
 let simA=target(SW,ROWS,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST,init), simB=target(SW,ROWS,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST,init);
 const active=()=>Math.max(0,Math.min(MAXN,Math.round(BASE*G.density)));
-function resetSim(){ for(const s of [simA,simB]){ gl.bindTexture(gl.TEXTURE_2D,s.t); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA32F,SW,ROWS,0,gl.RGBA,gl.FLOAT,init); } }
+// ---------- static structure: floor grid, arc bundles, 3D lattice, straight beams (same texture layout as one string per row) ----------
+function buildStruct(seed){
+  let s=seed>>>0; const R=()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; };
+  const lines=[], ends=[];
+  const seg=(p,q)=>lines.push(t=>[p[0]+(q[0]-p[0])*t,p[1]+(q[1]-p[1])*t,p[2]+(q[2]-p[2])*t]);
+  for(let i=-32;i<=32;i++){ const c=i*.25; seg([c,FLOOR,-8],[c,FLOOR,8]); seg([-8,FLOOR,c],[8,FLOOR,c]); }
+  ends.push(lines.length);
+  for(let b=0;b<22;b++){
+    const ang=R()*6.2832, tilt=(R()-.5)*1.3, r0=2.6+R()*4.5, sp=.04+R()*.16;
+    const u=[Math.cos(ang),0,Math.sin(ang)], nh=[-Math.sin(ang),0,Math.cos(ang)];
+    const v=[nh[0]*Math.sin(tilt),Math.cos(tilt),nh[2]*Math.sin(tilt)], nn=[nh[0]*Math.cos(tilt),-Math.sin(tilt),nh[2]*Math.cos(tilt)];
+    const c=[(R()-.5)*4,FLOOR-R()*r0*.3,(R()-.5)*4], nl=6+(R()*12|0);
+    const th0=Math.asin(Math.min(.95,(FLOOR-c[1])/(r0*Math.max(.2,v[1]))));
+    for(let j=0;j<nl;j++){ const o=(j-nl/2)*sp;
+      lines.push(t=>{ const th=th0+(Math.PI-2*th0)*t, cs=Math.cos(th)*r0, sn=Math.sin(th)*r0;
+        return [c[0]+u[0]*cs+v[0]*sn+nn[0]*o, Math.max(FLOOR,c[1]+v[1]*sn+nn[1]*o), c[2]+u[2]*cs+v[2]*sn+nn[2]*o]; }); }
+  }
+  ends.push(lines.length);
+  const g=[-3,-1.5,0,1.5,3];
+  for(const x of g) for(const z of g) seg([x,FLOOR,z],[x,FLOOR+4.5,z]);
+  for(let k=1;k<=3;k++){ const y=FLOOR+1.5*k; for(const c of g){ seg([-3,y,c],[3,y,c]); seg([c,y,-3],[c,y,3]); } }
+  ends.push(lines.length);
+  for(let b=0;b<10;b++){
+    const a=R()*6.2832, el=.2+R()*.75, dir=[Math.cos(a)*Math.sqrt(1-el*el),el,Math.sin(a)*Math.sqrt(1-el*el)];
+    const base=[(R()-.5)*8,FLOOR,(R()-.5)*8], side=[-dir[2],0,dir[0]], sl=Math.hypot(side[0],side[2])||1, sp=.06+R()*.1;
+    for(let j=0;j<8;j++){ const o=(j-3.5)*sp/sl, p=[base[0]+side[0]*o,FLOOR,base[2]+side[2]*o];
+      seg(p,[p[0]+dir[0]*11,p[1]+dir[1]*11,p[2]+dir[2]*11]); }
+  }
+  ends.push(lines.length);
+  const data=new Float32Array(SEG*lines.length*4);
+  lines.forEach((f,i)=>{ for(let k=0;k<SEG;k++){ const p=f(k/(SEG-1)), o=(i*SEG+k)*4; data[o]=p[0]; data[o+1]=p[1]; data[o+2]=p[2]; data[o+3]=1000-k; } });
+  return {data,n:lines.length,ends};
+}
+const STRUCT=buildStruct(+(q.get('seed')||7));
+const structTex=target(SEG,STRUCT.n,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST,STRUCT.data);
+const focusRig=new StringsTracking.FocusRig(); let growthTracker=null;
+function resetTracking(){ if(growthTracker) growthTracker.cancel(); focusRig.invalidate(); }
+function resetSim(){ resetTracking(); for(const s of [simA,simB]){ gl.bindTexture(gl.TEXTURE_2D,s.t); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA32F,SW,ROWS,0,gl.RGBA,gl.FLOAT,init); } }
 
-let W=0,H=0,scene,bl=[];
+let W=0,H=0,scene,bl=[],ms=null,sceneDepth=null;
 function setSize(w,h){
   if(w===W&&h===H) return; W=w;H=h; canvas.width=w; canvas.height=h;
   for(const t of [scene,...bl.flat()]) if(t){ gl.deleteTexture(t.t); gl.deleteFramebuffer(t.f); }
   const mk=(d)=>target(Math.max(2,w>>d),Math.max(2,h>>d),gl.RGBA16F,gl.RGBA,gl.HALF_FLOAT,gl.LINEAR);
   scene=mk(0); bl=[1,2,3].map(d=>[mk(d),mk(d)]);
+  if(ms){ gl.deleteFramebuffer(ms.f); gl.deleteRenderbuffer(ms.c); gl.deleteRenderbuffer(ms.d); ms=null; }
+  if(sceneDepth){ gl.deleteRenderbuffer(sceneDepth); sceneDepth=null; }
+  const rb=(samples,fmt)=>{ const r=gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER,r);
+    samples?gl.renderbufferStorageMultisample(gl.RENDERBUFFER,samples,fmt,w,h):gl.renderbufferStorage(gl.RENDERBUFFER,fmt,w,h); return r; };
+  const samples=Math.min(+(q.get('msaa')||4),gl.getParameter(gl.MAX_SAMPLES));
+  if(samples>1){
+    ms={f:gl.createFramebuffer(),c:rb(samples,gl.RGBA16F),d:rb(samples,gl.DEPTH_COMPONENT24)};
+    gl.bindFramebuffer(gl.FRAMEBUFFER,ms.f);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.RENDERBUFFER,ms.c);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,ms.d);
+    if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE){ gl.deleteFramebuffer(ms.f); gl.deleteRenderbuffer(ms.c); gl.deleteRenderbuffer(ms.d); ms=null; }
+  }
+  if(!ms){ sceneDepth=rb(0,gl.DEPTH_COMPONENT24); gl.bindFramebuffer(gl.FRAMEBUFFER,scene.f);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,sceneDepth); }
 }
 function resize(){ const dpr=Math.min(window.devicePixelRatio||1,2); setSize(Math.max(2,Math.round(innerWidth*dpr)),Math.max(2,Math.round(innerHeight*dpr))); }
 
@@ -241,8 +445,8 @@ function lookAt(e,c){ let z=[e[0]-c[0],e[1]-c[1],e[2]-c[2]]; let l=Math.hypot(..
 // ---------- state ----------
 let cur=Math.min(SCENES.length-1,Math.max(0,(+(q.get('scene')||1))-1)), sceneT=0;
 const P=Float32Array.from(SCENES[cur].P), Pe=new Float32Array(NP);
-let T=0, acc=0, frame=0, fps=60, camA=.6, dimNow=1;
-function go(i){ cur=(i+SCENES.length)%SCENES.length; sceneT=0; }
+let T=0, acc=0, frame=0, fps=60, camA=.6, dimNow=1, lightT=0;
+function go(i){ cur=(i+SCENES.length)%SCENES.length; sceneT=0; resetTracking(); }
 
 function fullTri(){ gl.drawArrays(gl.TRIANGLES,0,3); }
 function pass(src,dst,sx,sy){
@@ -250,12 +454,19 @@ function pass(src,dst,sx,sy){
   gl.uniform2f(pGauss.u.uInv,1/dst.w,1/dst.h); gl.uniform2f(pGauss.u.uStep,sx/dst.w,sy/dst.h); fullTri();
 }
 
+function updateParameters(dt){
+  const Sc=SCENES[cur], k=G.trans>0?1-Math.exp(-3*dt/G.trans):1;
+  for(let i=0;i<NP;i++) P[i]+=(Sc.P[i]-P[i])*k;
+  const previousFish=Pe[20];
+  Pe.set(P); Pe[0]*=G.turb; Pe[15]*=G.width; Pe[18]*=G.pulse; Pe[19]*=G.expo;
+  // -1 means automatic, not a projection value to interpolate through.
+  const targetFish=controls.target.fish>=0?controls.target.fish:P[20];
+  Pe[20]=previousFish+(targetFish-previousFish)*(RENDER?1:1-Math.exp(-15*dt));
+}
 function stepSim(dt){
   T+=dt; frame++;
-  const Sc=SCENES[cur], k=G.trans>0?1-Math.exp(-dt/G.trans):1;
-  for(let i=0;i<NP;i++) P[i]+=(Sc.P[i]-P[i])*k;
-  Pe.set(P); Pe[0]*=G.turb; Pe[15]*=G.width; Pe[18]*=G.pulse; Pe[19]*=G.expo; if(G.fish>=0) Pe[20]=G.fish;
-  camA+=dt*P[23]*G.orbit;
+  const Sc=SCENES[cur];
+  camA+=dt*P[23]*G.orbit; lightT+=dt*G.lspeed;
   acc+=dt*P[16]; let shift=0; if(acc>=1){ acc=Math.min(acc-1,1); shift=1; }
   gl.disable(gl.BLEND);
   gl.useProgram(pSim.p); gl.bindFramebuffer(gl.FRAMEBUFFER,simB.f); gl.viewport(0,0,SW,ROWS);
@@ -265,17 +476,56 @@ function stepSim(dt){
   fullTri(); [simA,simB]=[simB,simA];
 }
 
-function draw(){
+function draw(dt=1/60,offline=false){
   const az=camA+G.yaw, cd=P[21]*G.camD;
-  const e=[Math.sin(az)*cd, P[22]+G.camH+.3*Math.sin(T*.021)*(1-Pe[20]), Math.cos(az)*cd];
-  gl.bindFramebuffer(gl.FRAMEBUFFER,scene.f); gl.viewport(0,0,W,H); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
-  gl.useProgram(pLine.p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,simA.t); gl.uniform1i(pLine.u.uS,0);
-  gl.uniformMatrix4fv(pLine.u.uV,false,lookAt(e,[0,P[24]+G.lookY,0])); gl.uniform2f(pLine.u.uRes,W/2,H/2);
-  gl.uniform1f(pLine.u.uF,1/Math.tan(G.fov*Math.PI/360)); gl.uniform1f(pLine.u.uAspect,W/H);
-  gl.uniform1f(pLine.u.uT,T); gl.uniform1f(pLine.u.uPx,H/1080); gl.uniform1f(pLine.u.uDens,1/Math.sqrt(Math.max(1,G.density))); gl.uniform1fv(pLine.u.uP,Pe);
-  if(active()>0) gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,active()*(SEG-1));
-  gl.disable(gl.BLEND);
+  const camY=Math.max(FLOOR+.12,P[22]+G.camH+.3*Math.sin(T*.021)*(1-Pe[20]));
+  const e=[Math.sin(az)*cd, camY, Math.cos(az)*cd];
+  const aim=[0,P[24]+G.lookY,0];
+  if(G.follow&&!growthTracker) growthTracker=new StringsTracking.GPUTracker(gl,target,prog,VS_FULL,ROWS,SEG);
+  if(growthTracker){
+    const sample=growthTracker.sample(simA.t,active(),dt,G.follow,offline);
+    if(sample) focusRig.receive(sample);
+    if(active()===0 || growthTracker.failed) focusRig.invalidate();
+  }
+  const offset=focusRig.step(dt,G.follow,G.followStrength,G.followSmooth,aim);
+  for(let i=0;i<3;i++){ aim[i]+=offset[i]; e[i]+=offset[i]*.7; }
+  e[1]=Math.max(FLOOR+.12,e[1]);
+  const lay=(i,g)=>Math.max(0,Math.min(1.5,P[26+i]*Math.min(g,1)+Math.max(g-1,0)));   // 1 = scene preset, 0 = off, 2 = forced on
+  const t=lightT, LI=G.light;
+  const LIGHTS=new Float32Array([
+    1.7*Math.sin(.23*t), .35+.5*Math.sin(.31*t), 1.7*Math.cos(.23*t), 3.0*LI,
+    -2.6*Math.sin(.17*t+1), FLOOR+.45+.25*Math.sin(.4*t), 2.6*Math.cos(.17*t+1), 2.4*LI,
+    .9*Math.sin(.13*t+3), 1.5+.4*Math.sin(.21*t), -.9*Math.cos(.13*t+3), 2.0*LI]);
+  const view=lookAt(e,aim), fl=1/Math.tan(G.fov*Math.PI/360);
+  const camUniforms=(p)=>{ gl.uniformMatrix4fv(p.u.uV,false,view); gl.uniform1f(p.u.uF,fl); gl.uniform1f(p.u.uAspect,W/H); gl.uniform1f(p.u.uFish,Pe[20]);
+    gl.uniform1f(p.u.uPx,H/1080); gl.uniform1f(p.u.uFloorY,FLOOR); gl.uniform4fv(p.u.uL,LIGHTS); };
+  gl.bindFramebuffer(gl.FRAMEBUFFER,ms?ms.f:scene.f); gl.viewport(0,0,W,H); gl.clearColor(0,0,0,1); gl.clearDepth(1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.BLEND);
+  gl.useProgram(pLine.p); gl.activeTexture(gl.TEXTURE0); gl.uniform1i(pLine.u.uS,0); camUniforms(pLine);
+  gl.uniform2f(pLine.u.uRes,W/2,H/2); gl.uniform1f(pLine.u.uT,T); gl.uniform1fv(pLine.u.uP,Pe);
+  gl.uniform1f(pLine.u.uAmb,G.ambient); gl.uniform1f(pLine.u.uMetal,G.metal); gl.uniform1f(pLine.u.uRange,.18/Math.max(.05,G.lrange)**2);
+  for(const [uniform,key] of Object.entries({uRoughness:'roughness',uAnisotropy:'anisotropy',uSpecular:'specular',uEnv:'env',uEnvAngle:'envAngle',uEnvWidth:'envWidth',uWarmth:'warmth',uEmission:'emission',uLegacy:'materialLegacy'})) gl.uniform1f(pLine.u[uniform],G[key]);
+  gl.uniform4f(pLine.u.uLayer,lay(0,G.gfloor),lay(1,G.arch),lay(2,G.lattice),lay(3,G.beams)); gl.uniform4iv(pLine.u.uLayerEnd,STRUCT.ends);
+  const mir=Math.min(1,G.reflect*.45), camM=[e[0],2*FLOOR-e[1],e[2]];
+  const drawAll=(m,cam)=>{ gl.uniform1f(pLine.u.uMirror,m); gl.uniform3fv(pLine.u.uCam,cam);
+    gl.bindTexture(gl.TEXTURE_2D,simA.t); gl.uniform1f(pLine.u.uStruct,0);
+    if(active()>0) gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,active()*(SEG-1));
+    gl.bindTexture(gl.TEXTURE_2D,structTex.t); gl.uniform1f(pLine.u.uStruct,1);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,STRUCT.n*(SEG-1)); };
+  if(mir>0) drawAll(mir,camM);     // planar reflection: the scene mirrored below the floor
+  const fa=Math.min(1,lay(0,G.gfloor));
+  if(fa>0){ gl.useProgram(pFloor.p); camUniforms(pFloor); gl.uniform2f(pFloor.u.uInv,1/W,1/H); gl.uniform3fv(pFloor.u.uCam,e);
+    gl.uniform1f(pFloor.u.uRange,.18/Math.max(.05,G.lrange)**2); gl.uniform1f(pFloor.u.uAmt,fa*(1-.75*Pe[20]));
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE); gl.depthFunc(gl.ALWAYS); fullTri(); gl.depthFunc(gl.LEQUAL); gl.disable(gl.BLEND);
+    gl.useProgram(pLine.p); gl.bindTexture(gl.TEXTURE_2D,simA.t); }
+  drawAll(0,e);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE); gl.depthMask(false);
+  gl.useProgram(pDot.p); camUniforms(pDot);
+  if(mir>0){ gl.uniform1f(pDot.u.uMirror,mir); gl.drawArrays(gl.POINTS,0,3); }
+  gl.uniform1f(pDot.u.uMirror,0); gl.drawArrays(gl.POINTS,0,3);
+  gl.depthMask(true); gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+  if(ms){ gl.bindFramebuffer(gl.READ_FRAMEBUFFER,ms.f); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,scene.f);
+    gl.blitFramebuffer(0,0,W,H,0,0,W,H,gl.COLOR_BUFFER_BIT,gl.NEAREST); }
 
   gl.useProgram(pGauss.p); gl.uniform1i(pGauss.u.uTex,0);
   let src=scene;
@@ -285,7 +535,7 @@ function draw(){
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,scene.t); gl.uniform1i(pComp.u.uScene,0);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,bl[0][0].t); gl.uniform1i(pComp.u.uB1,1);
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,bl[2][0].t); gl.uniform1i(pComp.u.uB3,2);
-  gl.uniform2f(pComp.u.uInv,1/W,1/H); gl.uniform1f(pComp.u.uExp,Pe[19]); gl.uniform1f(pComp.u.uWhite,G.white);
+  gl.uniform2f(pComp.u.uInv,1/W,1/H); gl.uniform1f(pComp.u.uExp,Pe[19]*2.6); gl.uniform1f(pComp.u.uWhite,G.white);
   gl.uniform1f(pComp.u.uBloom,G.bloom); gl.uniform1f(pComp.u.uDim,dimNow); fullTri();
   gl.activeTexture(gl.TEXTURE0);
 }
@@ -296,34 +546,36 @@ function toggleRec(){
   if(rec){ rec.stop(); rec=null; return; }
   const chunks=[]; rec=new MediaRecorder(canvas.captureStream(60),{mimeType:'video/webm;codecs=vp9',videoBitsPerSecond:40e6});
   rec.ondataavailable=e=>chunks.push(e.data);
-  rec.onstop=()=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(chunks,{type:'video/webm'})); a.download='strings-'+Date.now()+'.webm'; a.click(); };
+  rec.onstop=()=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(chunks,{type:'video/webm'})); a.download='strings-space-'+Date.now()+'.webm'; a.click(); };
   rec.start();
 }
 const fullscreen=()=>document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();
 const openPanel=()=>window.open('control.html','strings-control','width=1100,height=960');
 addEventListener('keydown',e=>{
-  if(e.key>='1'&&e.key<=String(SCENES.length)){ go(+e.key-1); G.auto=false; }
-  else if(e.key===' '){ G.auto=!G.auto; e.preventDefault(); }
+  if(e.key>='1'&&e.key<=String(SCENES.length)){ go(+e.key-1); controls.set({auto:false}); }
+  else if(e.key===' '){ controls.set({auto:!G.auto}); e.preventDefault(); }
   else if(e.key==='ArrowRight') go(cur+1);
   else if(e.key==='ArrowLeft') go(cur-1);
   else if(e.key==='f'||e.key==='F') fullscreen();
-  else if(e.key==='h'||e.key==='H') G.hud=!G.hud;
+  else if(e.key==='h'||e.key==='H') controls.set({hud:!G.hud});
+  else if(e.key==='t'||e.key==='T') controls.set({follow:!G.follow});
   else if(e.key==='r'||e.key==='R') toggleRec();
   else if(e.key==='c'||e.key==='C') openPanel();
 });
 canvas.addEventListener('dblclick',fullscreen);
-const share=(k,v)=>{ G[k]=v; bc&&bc.postMessage({t:'g',k,v}); };   // keep other outputs and the panel on the same values
-canvas.addEventListener('pointermove',e=>{ if(e.buttons&1){ share('yaw',G.yaw-e.movementX*.005); share('camH',Math.max(-3,Math.min(3,G.camH+e.movementY*.008))); } });
-canvas.addEventListener('wheel',e=>{ share('camD',Math.max(.15,Math.min(3,G.camD*Math.exp(e.deltaY*.001)))); e.preventDefault(); },{passive:false});
+const share=(k,v)=>{ controls.set({[k]:v}); bc&&bc.postMessage({t:'g',k,v}); };
+canvas.addEventListener('pointermove',e=>{ if(e.buttons&1){ share('yaw',controls.target.yaw-e.movementX*.005); share('camH',Math.max(-3,Math.min(3,controls.target.camH+e.movementY*.008))); } });
+canvas.addEventListener('wheel',e=>{ share('camD',Math.max(.15,Math.min(3,controls.target.camD*Math.exp(e.deltaY*.001)))); e.preventDefault(); },{passive:false});
 
 let bc=null;
 try{ bc=new BroadcastChannel('strings'); }catch(e){}
-const sendState=()=>bc&&bc.postMessage({t:'state',cur,fps:Math.round(fps),G,names:SCENES.map(s=>s.name),n:active(),seg:SEG,w:W,h:H,rec:!!rec,pad:padName,left:Math.max(0,G.dur-sceneT|0)});
+const sendState=()=>bc&&bc.postMessage({t:'state',cur,fps:Math.round(fps),G:controls.target,names:SCENES.map(s=>s.name),n:active(),seg:SEG,w:W,h:H,rec:!!rec,pad:padName,left:Math.max(0,G.dur-sceneT|0),tracking:!G.follow?'off':growthTracker?.failed?'error':focusRig.age<1.5?'following':'waiting'});
 if(bc) bc.onmessage=ev=>{ const m=ev.data||{};
-  if(m.t==='g'&&m.k in G) G[m.k]=m.v;
-  else if(m.t==='camreset') Object.assign(G,CAM0);
-  else if(m.t==='black') G.dim=G.dim<.01?1:0;
-  else if(m.t==='scene'){ go(m.i); if(m.hold) G.auto=false; }
+  if(m.t==='g') controls.set({[m.k]:m.v});
+  else if(m.t==='material') controls.set(StringsMaterials.sanitize(m.values));
+  else if(m.t==='camreset') controls.set({...CAM0,follow:false});
+  else if(m.t==='black') controls.set({dim:controls.target.dim<.01?1:0});
+  else if(m.t==='scene'){ go(m.i); if(m.hold) controls.set({auto:false}); }
   else if(m.t==='rec') toggleRec();
   else if(m.t==='hello') sendState();
 };
@@ -337,22 +589,24 @@ function pollPad(){
   if(gp&&bc&&frame%2===0) bc.postMessage({t:'padraw',id:gp.id,a:[...gp.axes],b:gp.buttons.map(x=>x.value)});
 }
 
-let last=performance.now();
+let last=performance.now(),lastStateSent=0,lastHud=0;
 function tick(now){
   requestAnimationFrame(tick);
   resize();
-  const dt=Math.min((now-last)/1000,1/20); last=now; if(dt<=0) return;
-  fps+=(1/dt-fps)*.05; sceneT+=dt;
+  const elapsed=(now-last)/1000, dt=Math.min(elapsed,1/20); last=now; if(elapsed<=0) return;
+  fps+=(1/elapsed-fps)*.05; sceneT+=dt;
+  controls.step(dt); updateParameters(dt);
   if(G.auto&&sceneT>G.dur) go(cur+1);
   pollPad();
-  dimNow+=(G.dim-dimNow)*(1-Math.exp(-dt/.6));
+  dimNow=G.dim;
   if(G.speed>0) stepSim(dt*G.speed);
-  draw();
+  draw(dt);
   hud.style.opacity=G.hud?1:0;
-  if(frame%3===0) sendState();
-  if(frame%15===0){
+  if(now-lastStateSent>100){ sendState(); lastStateSent=now; }
+  if(now-lastHud>250){
+    lastHud=now;
     hud.innerHTML='<b>'+(cur+1)+' · '+SCENES[cur].name+'</b> '+(G.auto?'· auto '+Math.max(0,G.dur-sceneT|0)+'s':'· hold')+(rec?' · <b style="color:#f55">REC</b>':'')+
-      '<br>'+active()+' strings × '+SEG+' · '+W+'×'+H+' · '+fps.toFixed(0)+' fps<br>1–9 scene · ←/→ · space auto · F fullscreen · C control panel · R record · H hide';
+      '<br>'+active()+' strings × '+SEG+' · '+W+'×'+H+' · '+fps.toFixed(0)+' fps<br>1–9 scene · ←/→ · space auto · F fullscreen · C control · R record · H info · T track';
   }
 }
 
@@ -361,15 +615,16 @@ async function renderAll(){
   const fpsOut=+(q.get('fps')||60), secs=+(q.get('secs')||10), warm=+(q.get('warm')||22);
   const list=(q.get('scenes')||'all')==='all'?SCENES.map((_,i)=>i):q.get('scenes').split(',').map(s=>+s-1);
   setSize(+(q.get('w')||3840),+(q.get('h')||2160));
-  G.auto=false; G.trans=0;
+  G.auto=false; G.trans=0; controls.set({auto:false,trans:0});
   for(const i of list){
     const name=String(i+1).padStart(2,'0')+'_'+SCENES[i].name.split(' ')[0].toLowerCase();
     resetSim(); cur=i; T=i*37; frame=0; acc=0; camA=.6+i;
+    updateParameters(1);
     for(let k=0;k<warm*30;k++){ stepSim(1/30); if(k%60===0){ gl.flush(); await new Promise(r=>setTimeout(r,0)); } }
     let r=await fetch(`/start?name=${name}&fps=${fpsOut}`,{method:'POST'}); if(!r.ok) fail('server /start failed');
     const total=secs*fpsOut;
     for(let f=0;f<total;f++){
-      stepSim(1/fpsOut); draw();
+      stepSim(1/fpsOut); draw(1/fpsOut,true);
       const blob=await new Promise(res=>canvas.toBlob(res,'image/jpeg',.97));
       r=await fetch('/frame',{method:'POST',body:blob}); if(!r.ok) fail('server /frame failed');
       if(f%10===0) hud.innerHTML='<b>EXPORT '+name+'</b> '+f+' / '+total;

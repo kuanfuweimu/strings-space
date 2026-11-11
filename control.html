@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>STRINGS · control</title>
+<title>STRINGS SPACE · control</title>
 <style>
   :root{color-scheme:dark}
   body{margin:0;background:#111;color:#ccc;font:13px/1.5 system-ui,"Microsoft YaHei",sans-serif;padding:16px 18px 30px}
@@ -13,7 +13,10 @@
   #R h2:first-child{margin-top:4px}
   #scenes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
   button{background:#1c1c1c;color:#bbb;border:1px solid #2c2c2c;border-radius:6px;padding:9px 6px;font:inherit;cursor:pointer;text-align:left}
+  button{transition:background-color .2s,color .2s,border-color .2s}
   button:hover{border-color:#555;color:#fff}
+  button:disabled{opacity:.45;cursor:default}
+  h1,h2{letter-spacing:normal;text-transform:none}
   button.on{background:#e8e8e8;color:#000;border-color:#e8e8e8}
   .row{display:grid;grid-template-columns:118px 1fr 46px;align-items:center;gap:10px;margin:7px 0}
   .row label{color:#aaa}.row output{font:12px ui-monospace,Consolas,monospace;color:#888;text-align:right}
@@ -32,21 +35,29 @@
 </head>
 <body>
 <div id="L">
-<h1>STRINGS · CONTROL</h1>
+<h1>STRINGS SPACE · CONTROL</h1>
 <div id="status">等待输出窗口… (先打开 index.html)</div>
 
 <h2>片段 Scene</h2>
 <div id="scenes"></div>
 <div class="bar" style="margin-top:8px">
-  <button id="auto">自动轮播</button><button id="black">黑场 Blackout</button><button id="hud">HUD</button><button id="rec">录制 webm</button>
+  <button id="auto">自动轮播</button><button id="black">黑场 Blackout</button><button id="hud">画面信息 H</button><button id="rec">录制 webm</button>
 </div>
+<div class="bar" style="margin-top:8px"><button id="follow" aria-pressed="false">生长追踪 · 关</button><button id="cameraReset">镜头复位</button></div>
 
 <h2>外设 Devices</h2>
 <div class="bar"><button id="midiBtn">连接 MIDI</button><button id="learn">MIDI 学习</button><button id="mreset">恢复默认映射</button></div>
 <div id="dev" style="color:#777;font:12px ui-monospace,Consolas,monospace;margin-top:6px;line-height:1.7"></div>
 
 <h2>画面 Look</h2><div id="look"></div>
+<h2>材质 Material</h2><div id="materialPresets" class="bar"></div>
+<div id="material"></div>
+<div class="bar"><button id="saveMaterial">保存我的材质</button><button id="restoreMaterial">载入我的材质</button></div>
+<p id="materialNote"><small>参数以约 0.2 秒平滑过渡。降低发光与柔光，保留金属的亮暗反差。</small></p>
+<h2>空间 Space · 灯光与结构</h2><div id="space"></div>
 <h2>镜头 Camera</h2>
+<p id="followStatus"><small>开启后跟随活跃线头的中心，快捷键 T。仍可手动环绕、推拉。</small></p>
+<div id="tracking"></div>
 <div id="pad">拖动 = 环绕 / 升降 · 滚轮 = 推拉 · 双击 = 复位</div>
 <div id="cam"></div>
 <h2>运动 Motion</h2><div id="motion"></div>
@@ -63,6 +74,7 @@
 <div id="dsinfo" class="info"></div>
 </div>
 
+<script src="materials.js"></script>
 <script>
 const bc=new BroadcastChannel('strings');
 const $=id=>document.getElementById(id);
@@ -72,6 +84,9 @@ const SL={
   look:[['expo','曝光 Exposure',.2,3,.01],['white','白色上限 White',.3,1,.01],['bloom','柔光 Glow',0,2.5,.01],['width','线宽 Width',.4,3,.01],['density','密度 Density',0,10,.05],['dim','总亮度 Master',0,1,.01]],
   motion:[['speed','速度 Speed',0,2.5,.01],['turb','扰动 Turbulence',0,3,.01],['pulse','脉冲频率 Pulse',.2,3,.01],['fish','鱼眼 Fisheye (-1=自动)',-1,1,.05]],
   cam:[['camD','距离 Distance',.15,3,.01],['camH','高度 Height',-3,3,.01],['yaw','环绕角 Yaw',-3.15,3.15,.01],['lookY','视点高度 Look-at',-2,2,.01],['fov','视角 FOV°',20,120,1],['orbit','自动旋转 Orbit',0,4,.01]],
+  material:[['metal','金属度 Metallic',0,1,.01],['roughness','粗糙度 Roughness',.08,1,.01],['anisotropy','拉丝方向 Anisotropy',-.9,.9,.01],['specular','高光强度 Specular',0,2,.01],['env','环境反射 Studio',0,3,.01],['envAngle','反射方向 Rotation',0,360,1],['envWidth','灯带宽度 Width',.03,.5,.01],['warmth','冷暖 Tint',-1,1,.01],['emission','自发光 Emission',0,2,.01]],
+  tracking:[['followStrength','跟随强度 Follow',0,1,.01],['followSmooth','追踪缓动 Smoothing',.2,5,.1]],
+  space:[['light','灯光 Light',0,4,.01],['lrange','照射范围 Range',.2,4,.01],['lspeed','灯光移动 LightSpeed',0,4,.01],['ambient','环境光 Ambient',0,4,.01],['reflect','地面反射 Reflect',0,2,.01],['gfloor','地面网格 Floor',0,2,.01],['arch','拱形 Arches',0,2,.01],['lattice','三维网格 Lattice',0,2,.01],['beams','直线束 Beams',0,2,.01]],
   timing:[['trans','过渡秒数 Transition',.1,12,.1],['dur','每段秒数 Duration',5,180,1]],
 };
 // One canonical value per parameter. Every source (sliders, MIDI, gamepad, output-window mouse) goes through setv or
@@ -93,6 +108,7 @@ const now=()=>performance.now();
 let lastChange=null;
 function show(k){ const I=inputs[k]; if(document.activeElement!==I.inp||!I.held) I.inp.value=VAL[k]; I.out.textContent=fmt(k,VAL[k]); }
 function setv(k,v,src){ const I=inputs[k]; v=Math.max(I.min,Math.min(I.max,v)); VAL[k]=v; touched[k]=now(); show(k); send(k,v);
+  if(k in StringsMaterials.ranges && k!=='bloom' && G?.materialLegacy){ send('materialLegacy',0); G.materialLegacy=0; }
   if(src) lastChange={k,v,src,t:now()}; }
 const cur=k=>VAL[k]!==undefined?VAL[k]:+inputs[k].inp.value;
 const norm=k=>{ const I=inputs[k]; return (cur(k)-I.min)/(I.max-I.min); };
@@ -101,11 +117,33 @@ const pad=$('pad');
 pad.onpointerdown=e=>pad.setPointerCapture(e.pointerId);
 pad.onpointermove=e=>{ if(!(e.buttons&1)) return; let y=cur('yaw')-e.movementX*.01; if(y>3.15)y-=6.283; if(y<-3.15)y+=6.283; setv('yaw',y,'拖动区'); setv('camH',cur('camH')+e.movementY*.012,'拖动区'); };
 pad.onwheel=e=>{ setv('camD',cur('camD')*Math.exp(e.deltaY*.001),'拖动区'); e.preventDefault(); };
-pad.ondblclick=()=>{ for(const k of ['camD','camH','yaw','lookY','fov']) setv(k,inputs[k].def,'拖动区'); };
+pad.ondblclick=()=>bc.postMessage({t:'camreset'});
 $('auto').onclick=()=>send('auto',!(G&&G.auto));
 $('hud').onclick=()=>send('hud',!(G&&G.hud));
 $('rec').onclick=()=>bc.postMessage({t:'rec'});
 $('black').onclick=()=>bc.postMessage({t:'black'});
+$('follow').onclick=()=>send('follow',!G?.follow);
+$('cameraReset').onclick=()=>bc.postMessage({t:'camreset'});
+const savedMaterialKey='strings-space-material';
+let savedMaterial=null;
+try{ savedMaterial=JSON.parse(localStorage.getItem(savedMaterialKey)||'null'); }catch{}
+$('restoreMaterial').disabled=!savedMaterial;
+function applyMaterial(values){
+  const clean=StringsMaterials.sanitize(values);
+  bc.postMessage({t:'material',values:clean});
+  for(const [k,v] of Object.entries(clean)) if(inputs[k]){ VAL[k]=v; touched[k]=now(); show(k); }
+}
+for(const [id,preset] of Object.entries(StringsMaterials.presets)){
+  const button=document.createElement('button'); button.textContent=preset.name; button.dataset.material=id;
+  button.onclick=()=>applyMaterial(preset.values); $('materialPresets').appendChild(button);
+}
+$('saveMaterial').onclick=()=>{
+  if(!G) return;
+  savedMaterial=StringsMaterials.sanitize({...G,...VAL});
+  try{localStorage.setItem(savedMaterialKey,JSON.stringify(savedMaterial)); $('restoreMaterial').disabled=false; $('materialNote').textContent='已保存到当前浏览器。';}
+  catch{$('materialNote').textContent='浏览器不允许保存本地设置。';}
+};
+$('restoreMaterial').onclick=()=>{ if(savedMaterial) applyMaterial(savedMaterial); };
 
 let relay=null, lastState=null;
 bc.onmessage=ev=>{ const m=ev.data; if(!m) return;
@@ -122,6 +160,10 @@ bc.onmessage=ev=>{ const m=ev.data; if(!m) return;
   [...$('scenes').children].forEach((b,i)=>b.classList.toggle('on',i===m.cur));
   $('auto').classList.toggle('on',G.auto); $('auto').textContent=G.auto?'自动轮播 · '+m.left+'s':'自动轮播 (关)';
   $('black').classList.toggle('on',G.dim<.01); $('hud').classList.toggle('on',G.hud); $('rec').classList.toggle('on',m.rec);
+  $('follow').classList.toggle('on',G.follow); $('follow').setAttribute('aria-pressed',String(G.follow)); $('follow').textContent=G.follow?'生长追踪 · 开':'生长追踪 · 关';
+  $('followStatus').textContent=({following:'正在平滑跟随活跃线头中心',waiting:'等待生长中的线头；镜头平滑回到手动位置',off:'追踪关闭 · T 开关追踪 · 镜头复位会关闭追踪',error:'GPU 取样失败，已回到手动镜头；刷新输出窗口可重试'})[m.tracking]||'请刷新输出窗口以载入新功能';
+  const matId=StringsMaterials.identify(G);
+  for(const b of $('materialPresets').children) b.classList.toggle('on',b.dataset.material===matId);
   $('status').textContent=`已连接 · ${m.w}×${m.h} · ${m.fps} fps · ${m.n} strings`;
 };
 
@@ -131,9 +173,10 @@ const DEFMAP={};
 ['expo','white','bloom','width','density','speed','turb','dim'].forEach((k,i)=>DEFMAP['c'+(5+i)]=k);
 ['camD','camH','yaw','lookY','fov','orbit','fish','pulse'].forEach((k,i)=>DEFMAP['c'+(13+i)]=k);
 ['trans','dur'].forEach((k,i)=>DEFMAP['c'+(21+i)]=k);
+['light','lrange','ambient','metal','reflect','arch','lattice','beams'].forEach((k,i)=>DEFMAP['c'+(29+i)]=k);
 for(let i=0;i<9;i++) DEFMAP['c'+(37+i)]='@scene'+i;
 Object.assign(DEFMAP,{c46:'@auto',c47:'@black',c48:'@camreset',c49:'@prev',c50:'@next'});
-let MAP=JSON.parse(localStorage.getItem('strings-midi')||'null')||{...DEFMAP};
+let MAP=JSON.parse(localStorage.getItem('strings-space-midi')||'null')||{...DEFMAP};
 let learning=false, learnTarget=null, midiIn='', padName='', lastMsg='', lastMidi=null, midiState='idle';
 const hits={};
 const ACT={auto:()=>$('auto').onclick(),black:()=>$('black').onclick(),camreset:()=>bc.postMessage({t:'camreset'}),
@@ -146,14 +189,14 @@ function onMidi(data){
   const key=(st===0xb0?'c':'n')+num, on=st!==0x80&&val>0; lastMsg=key+'='+val;
   if(st===0xb0) hits[num]=now();
   if(learning&&learnTarget){ if(st===0xb0||on){ for(const k in MAP) if(MAP[k]===learnTarget) delete MAP[k]; MAP[key]=learnTarget;
-      localStorage.setItem('strings-midi',JSON.stringify(MAP)); learnTarget=null; } showDev(); return; }
+      localStorage.setItem('strings-space-midi',JSON.stringify(MAP)); learnTarget=null; } showDev(); return; }
   const t=MAP[key]; lastMidi={key,num,val,t,ts:now()}; showDev(); if(!t) return;
   if(t[0]==='@'){ if(!on) return; const a=t.slice(1); if(a.startsWith('scene')) bc.postMessage({t:'scene',i:+a.slice(5),hold:true}); else ACT[a]&&ACT[a](); }
   else if(st===0xb0&&inputs[t]){ const I=inputs[t]; setv(t,I.min+(I.max-I.min)*val/127,'MIDI CC '+num); }
 }
 async function midiConnect(){
   if(!navigator.requestMIDIAccess){ midiState='unsupported'; midiIn='这个浏览器不支持 Web MIDI，请用 Chrome 或 Edge 打开 (双击 start.bat)'; showDev(); return; }
-  if(!isSecureContext){ midiState='unsupported'; midiIn='需要通过 http://localhost:8787 打开，不能直接双击 html 文件'; showDev(); return; }
+  if(!isSecureContext){ midiState='unsupported'; midiIn='需要通过 http://localhost:8788 打开，不能直接双击 html 文件'; showDev(); return; }
   midiState='asking'; midiIn='请求权限中… 如果浏览器弹窗，请点「允许」'; showDev();
   try{ const acc=await navigator.requestMIDIAccess();
     const hook=()=>{ const names=[]; acc.inputs.forEach(inp=>{ inp.onmidimessage=e=>onMidi(e.data); if(inp.state==='connected') names.push(inp.name); });
@@ -166,7 +209,7 @@ async function midiConnect(){
 $('midiBtn').onclick=midiConnect;
 const LCXL_RE=/LCXL|Launch Control/i;
 $('learn').onclick=()=>{ learning=!learning; learnTarget=null; $('learn').classList.toggle('on',learning); showDev(); };
-$('mreset').onclick=()=>{ MAP={...DEFMAP}; localStorage.removeItem('strings-midi'); showDev(); };
+$('mreset').onclick=()=>{ MAP={...DEFMAP}; localStorage.removeItem('strings-space-midi'); showDev(); };
 document.addEventListener('click',e=>{ if(!learning) return;
   const row=e.target.closest('.row'), b=e.target.closest('button');
   if(row&&e.target.tagName==='LABEL') learnTarget=row.dataset.k;
@@ -204,9 +247,10 @@ function padStep(dt){
 // ---------- live device diagrams ----------
 const NS='http://www.w3.org/2000/svg';
 const el=(p,tag,a={},txt)=>{ const e=document.createElementNS(NS,tag); for(const k in a) e.setAttribute(k,a[k]); if(txt!==undefined) e.textContent=txt; p.appendChild(e); return e; };
-const COL={cam:'#4fd1ff',look:'#ffb347',mo:'#c9a0ff',time:'#7be08a',scene:'#ff6fd8',act:'#7be08a',off:'#3a3a3a'};
+const COL={cam:'#4fd1ff',look:'#ffb347',mo:'#c9a0ff',time:'#7be08a',space:'#ff7a59',scene:'#ff6fd8',act:'#7be08a',off:'#3a3a3a'};
 const GROUP={camD:'cam',camH:'cam',yaw:'cam',lookY:'cam',fov:'cam',orbit:'cam',expo:'look',white:'look',bloom:'look',width:'look',density:'look',dim:'look',
-  speed:'mo',turb:'mo',pulse:'mo',fish:'mo',trans:'time',dur:'time'};
+  speed:'mo',turb:'mo',pulse:'mo',fish:'mo',trans:'time',dur:'time',
+  light:'space',lrange:'space',lspeed:'space',ambient:'space',metal:'space',reflect:'space',gfloor:'space',arch:'space',lattice:'space',beams:'space'};
 const ACTL={auto:'自动',black:'黑场',camreset:'复位',prev:'上一段',next:'下一段'};
 function tinfo(t){
   if(!t) return {lab:'—',col:COL.off};

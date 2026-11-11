@@ -3,7 +3,8 @@
 **/browser-profile/
 
 # Generated renders and development captures
-/out/
+/out/*
+!/out/README.md
 /shots/
 *.log
 *.tmp

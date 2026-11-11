@@ -1,4 +1,36 @@
-# STRINGS
+# STRINGS SPACE · v1.0.0
+
+独立空间版本：在 STRINGS 基础上增加空间结构、灯光、金属材质、地面反射与生长镜头追踪。默认服务端口是 **8788**。开发分支为 `strings-space`，本次版本标签为 `strings-space-v1.0.0`；主分支 `main` 继续提供原有 STRINGS 版本。
+
+## 材质与镜头更新
+
+- **材质面板**：金属度、粗糙度、拉丝方向、高光、环境反射、反射方向、灯带宽度、冷暖和自发光。线宽与柔光仍可在画面面板调节。
+- **预设**：抛光铬（默认）、拉丝钢、暗钛、原版对照。支持保存和载入一份自定义材质，存储于当前浏览器的 localStorage。
+- **生长追踪**：点击“生长追踪”或在画面窗口按 **T**。跟随真实活跃线头的加权中心，配有跟随强度与追踪缓动。默认关闭；复位镜头会关闭追踪。手动环绕、推拉仍可使用。
+- **0.2 秒平滑**：数值参数、材质预设、黑场、镜头复位采用帧率无关的指数过渡，约 0.2 秒完成 95% 的变化。场景过渡默认 0.2 秒，可在时间面板修改。HUD 与按钮状态使用 0.2 秒 CSS 渐变；录制等操作命令即时执行。
+- **真实 FPS**：显示按实际帧间隔计算；动画模拟仍限制过大的时间步长，但不再用该限制值估算帧率。
+
+金属的主要改动是 GGX 高光、可调粗糙度、沿线方向的各向异性、菲涅耳反射，以及可旋转的程序化摄影棚灯带环境。默认降低自发光和柔光，保留金属的暗部与窄高光；线段切线也做了连续化处理。这里的环境反射是轻量近似，不是场景互相反射或光线追踪。材质模型参考 [Filament 材质说明](https://google.github.io/filament/Filament.md.html)。
+
+追踪每秒约 10 次在 GPU 上取样最多 192 个活跃线头，聚合成一个 RGBA32F 像素。实时模式通过 PBO 与 fence 异步取回 **16 字节**，不会逐帧下载整张模拟纹理；无活跃线头时平滑回到手动镜头。追踪缓动控制主体移动的跟随速度，与操作参数的 0.2 秒响应分开。离线导出用固定步长、同步读取这一个像素，以便输出确定的帧序列。
+
+直接打开 `http://localhost:8788/?scene=2&auto=0&follow=1&material=chrome` 可预览生长追踪。其他材质名为 `brushed`、`titanium`、`original`；离线导出 Query 也可使用 `follow=1&material=chrome`。
+
+## 为什么原版运行流畅
+
+1. **GPU 模拟**：线头与历史轨迹存入两张浮点纹理交替更新，没有逐线、逐点的 JavaScript 更新循环。
+2. **批量画线**：线段用实例化薄片模拟圆柱明暗，不逐条创建高边数管道网格。默认 12,000 条线仍涉及大量片段计算，并非零成本。
+3. **静态结构缓存**：地面网格、拱线与直线束只在初始化时生成。
+4. **反射近似**：地面镜像重画一遍几何，并叠加平面光照，没有递归反射、阴影图或全局光照。
+5. **低分辨率柔光**：模糊在半、四分之一、八分之一尺寸的纹理上执行。
+
+新材质比原版增加片元着色开销。窗口尺寸、密度、显卡、反射和抗锯齿都会影响实际帧率，不能从离屏单帧耗时推断浏览器稳定帧率。实时输出仍随窗口尺寸变化；离线文件仍默认为 3840×2160。
+
+## 验证
+
+运行 `node --test tests/material-tracking.test.js` 可检查材质参数、0.2 秒平滑、追踪退回逻辑、异步读取与脚本语法。另在 RTX 4080 Laptop 上用独立 OpenGL 离屏环境编译了全部七组着色器，运行实际 GPU 生长模拟并渲染新旧材质；该检查不是浏览器或 TouchDesigner 的实机帧率测试。
+
+本版本提供浏览器输出；TouchDesigner 接入口见 `main` 分支，本分支暂未集成。
 
 **实时线条视觉、独立控制面板与现场输入控制。**
 
@@ -6,7 +38,9 @@ A browser-based generative line visual system with nine scenes, a separate contr
 
 STRINGS 在浏览器中模拟流动、生长与聚散的线条，用于投影内容探索、视觉排练和视频输出。画面窗口负责渲染，控制面板负责切换场景、调节参数与读取控制器。
 
-![STRINGS 线条视觉示例](docs/preview/strings.png)
+![STRINGS SPACE 抛光铬预览](docs/preview/space-chrome.png)
+
+*1920×1080 离屏预览；使用实际视觉着色器在独立 OpenGL 环境中渲染。*
 
 ## 功能
 
@@ -32,8 +66,8 @@ STRINGS 在浏览器中模拟流动、生长与聚散的线条，用于投影内
 - 仓库内的启动与导出脚本面向 Windows；其他平台可手动运行 Node 服务。
 
 ```sh
-git clone https://github.com/kuanfuweimu/strings-web.git
-cd strings-web
+git clone --branch strings-space --single-branch https://github.com/kuanfuweimu/strings-web.git strings-space
+cd strings-space
 node server.js
 ```
 
@@ -41,8 +75,8 @@ node server.js
 
 | 页面 | 地址 |
 | --- | --- |
-| 画面输出 | <http://localhost:8787/> |
-| 控制面板 | <http://localhost:8787/control.html> |
+| 画面输出 | <http://localhost:8788/> |
+| 控制面板 | <http://localhost:8788/control.html> |
 
 Windows 下也可直接双击 **`start.bat`**。脚本会启动本地服务，并用独立浏览器配置打开两个窗口。浏览器配置保存在本地 `browser-profile/`。
 
@@ -73,6 +107,7 @@ Windows 下也可直接双击 **`start.bat`**。脚本会启动本地服务，�
 | 空格 | 开关自动轮播 |
 | `F` / 双击画面 | 进入或退出全屏 |
 | `H` | 显示或隐藏画面信息，默认隐藏 |
+| `T` | 开关生长镜头追踪 |
 | `C` | 打开控制面板 |
 | `R` | 开始或停止 WebM 录制 |
 | 控制面板镜头区域拖动 / 滚轮 / 双击 | 环绕与升降 / 推拉 / 镜头复位 |
@@ -126,7 +161,7 @@ Windows 下也可直接双击 **`start.bat`**。脚本会启动本地服务，�
 
 Windows 的 `export.ps1` 使用 Chrome、固定时间步进与 FFmpeg 编码。默认导出全部九个场景，每段 **3840×2160、60 fps、10 秒**。
 
-先结束已占用 8787 端口的本项目 Node 服务，再在项目目录运行：
+先结束已占用 8788 端口的本项目 Node 服务，再在项目目录运行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\export.ps1
@@ -152,10 +187,13 @@ $env:ENCODER = 'x264'
 ## 工程结构
 
 ```text
-strings-web/
+strings-space/
 ├── index.html       # WebGL2 模拟、渲染、场景与视频帧输出
 ├── control.html     # 独立控制面板、MIDI 与手柄映射
 ├── server.js        # 本地 HTTP 服务和 FFmpeg 编码入口
+├── materials.js     # 材质参数、预设与校验
+├── growth-tracker.js # GPU 线头取样与平滑跟随
+├── parameter-lag.js  # 0.2 秒参数过渡
 ├── start.bat        # Windows 启动入口
 ├── start.ps1        # 启动服务及双窗口
 ├── export.ps1       # 离线 MP4 导出入口

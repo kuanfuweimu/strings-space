@@ -1,8 +1,8 @@
 # Starts the local server and opens output + control in Chrome (or Edge) with a dedicated profile
-# where Web MIDI is pre-allowed for http://localhost:8787, so the Launch Control connects without prompts.
+# where Web MIDI is pre-allowed for http://localhost:8788, so the Launch Control connects without prompts.
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
-$url = 'http://localhost:8787'
+$url = 'http://localhost:8788'
 $browser = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
              "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") |
            Where-Object { Test-Path $_ } | Select-Object -First 1

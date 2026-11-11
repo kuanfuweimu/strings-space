@@ -1,7 +1,7 @@
 // Local server: serves the pages (so output + control share one origin) and
 // turns frames posted by index.html?render=1 into MP4 files through ffmpeg.
 const http = require('http'), fs = require('fs'), path = require('path'), { spawn } = require('child_process');
-const PORT = +process.env.PORT || 8787, ROOT = __dirname, OUT = path.join(ROOT, 'out');
+const PORT = +process.env.PORT || 8788, ROOT = __dirname, OUT = path.join(ROOT, 'out');
 fs.mkdirSync(OUT, { recursive: true });
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mp4': 'video/mp4', '.png': 'image/png' };
 let ff = null, frames = 0;
