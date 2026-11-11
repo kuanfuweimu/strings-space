@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>STRINGS · control</title>
+<style>
+  :root{color-scheme:dark}
+  body{margin:0;background:#111;color:#ccc;font:13px/1.5 system-ui,"Microsoft YaHei",sans-serif;padding:16px 18px 30px}
+  @media (min-width:900px){ body{display:grid;grid-template-columns:minmax(380px,440px) 1fr;gap:34px;align-items:start} #R{position:sticky;top:14px} }
+  h1{font-size:13px;letter-spacing:.2em;color:#fff;margin:0 0 2px}
+  #status{color:#777;font:12px ui-monospace,Consolas,monospace;margin-bottom:14px;min-height:18px}
+  h2{font-size:11px;letter-spacing:.18em;color:#777;margin:20px 0 8px;font-weight:500;text-transform:uppercase}
+  #R h2:first-child{margin-top:4px}
+  #scenes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+  button{background:#1c1c1c;color:#bbb;border:1px solid #2c2c2c;border-radius:6px;padding:9px 6px;font:inherit;cursor:pointer;text-align:left}
+  button:hover{border-color:#555;color:#fff}
+  button.on{background:#e8e8e8;color:#000;border-color:#e8e8e8}
+  .row{display:grid;grid-template-columns:118px 1fr 46px;align-items:center;gap:10px;margin:7px 0}
+  .row label{color:#aaa}.row output{font:12px ui-monospace,Consolas,monospace;color:#888;text-align:right}
+  .row.hot label{color:#fff}.row.hot output{color:#fff}
+  input[type=range]{width:100%;accent-color:#ddd}
+  .bar{display:flex;gap:6px;flex-wrap:wrap}.bar button{text-align:center;flex:1;min-width:90px}
+  #black.on{background:#c33;border-color:#c33;color:#fff}
+  small{color:#666}
+  #pad{height:110px;border:1px dashed #3a3a3a;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#666;font-size:12px;cursor:grab;user-select:none;touch-action:none;margin-bottom:8px}
+  #pad:active{cursor:grabbing;border-color:#888}
+  #ds{max-width:470px!important}
+  svg.dev{width:100%;max-width:600px;display:block;font-family:system-ui,"Microsoft YaHei",sans-serif}
+  .info{font:12px ui-monospace,Consolas,monospace;color:#888;margin:6px 0 0;min-height:36px;line-height:1.6;max-width:600px}
+  .info b{color:#eee;font-weight:600}
+</style>
+</head>
+<body>
+<div id="L">
+<h1>STRINGS · CONTROL</h1>
+<div id="status">等待输出窗口… (先打开 index.html)</div>
+
+<h2>片段 Scene</h2>
+<div id="scenes"></div>
+<div class="bar" style="margin-top:8px">
+  <button id="auto">自动轮播</button><button id="black">黑场 Blackout</button><button id="hud">HUD</button><button id="rec">录制 webm</button>
+</div>
+
+<h2>外设 Devices</h2>
+<div class="bar"><button id="midiBtn">连接 MIDI</button><button id="learn">MIDI 学习</button><button id="mreset">恢复默认映射</button></div>
+<div id="dev" style="color:#777;font:12px ui-monospace,Consolas,monospace;margin-top:6px;line-height:1.7"></div>
+
+<h2>画面 Look</h2><div id="look"></div>
+<h2>镜头 Camera</h2>
+<div id="pad">拖动 = 环绕 / 升降 · 滚轮 = 推拉 · 双击 = 复位</div>
+<div id="cam"></div>
+<h2>运动 Motion</h2><div id="motion"></div>
+<h2>时间 Timing</h2><div id="timing"></div>
+<p><small>面板、MIDI、手柄、输出窗口里的鼠标操作都写到同一份参数里，右侧示意图和滑杆会同步显示当前值。示意图本身也能用鼠标操作：旋钮上下拖或滚轮，推子直接拖，按钮点击；手柄图的摇杆、扳机可以拖，按键可以点。把输出窗口拖到投影/LED 那块屏幕上，按 F 或双击画面即可全屏。左下角文字默认隐藏，按 H 或点 HUD 可临时显示。</small></p>
+</div>
+
+<div id="R">
+<h2>Launch Control XL 3 · 实时</h2>
+<svg id="lcxl" class="dev" viewBox="0 0 460 432"></svg>
+<div id="lcinfo" class="info"></div>
+<h2>PS5 DualSense · 实时</h2>
+<svg id="ds" class="dev" viewBox="0 0 460 300"></svg>
+<div id="dsinfo" class="info"></div>
+</div>
+
+<script>
+const bc=new BroadcastChannel('strings');
+const $=id=>document.getElementById(id);
+const send=(k,v)=>bc.postMessage({t:'g',k,v});
+let G=null, built=false, curScene=0;
+const SL={
+  look:[['expo','曝光 Exposure',.2,3,.01],['white','白色上限 White',.3,1,.01],['bloom','柔光 Glow',0,2.5,.01],['width','线宽 Width',.4,3,.01],['density','密度 Density',0,10,.05],['dim','总亮度 Master',0,1,.01]],
+  motion:[['speed','速度 Speed',0,2.5,.01],['turb','扰动 Turbulence',0,3,.01],['pulse','脉冲频率 Pulse',.2,3,.01],['fish','鱼眼 Fisheye (-1=自动)',-1,1,.05]],
+  cam:[['camD','距离 Distance',.15,3,.01],['camH','高度 Height',-3,3,.01],['yaw','环绕角 Yaw',-3.15,3.15,.01],['lookY','视点高度 Look-at',-2,2,.01],['fov','视角 FOV°',20,120,1],['orbit','自动旋转 Orbit',0,4,.01]],
+  timing:[['trans','过渡秒数 Transition',.1,12,.1],['dur','每段秒数 Duration',5,180,1]],
+};
+// One canonical value per parameter. Every source (sliders, MIDI, gamepad, output-window mouse) goes through setv or
+// arrives in the output's state broadcast; the sliders and both device diagrams only ever display VAL.
+const inputs={}, VAL={}, touched={}, LBL={};
+const fmt=(k,v)=>k==='fov'||k==='dur'?Math.round(v)+'':(+v).toFixed(2);
+for(const [grp,list] of Object.entries(SL)) for(const [k,label,min,max,step] of list){
+  LBL[k]=label.split(' ')[0];
+  const row=document.createElement('div'); row.className='row'; row.dataset.k=k;
+  row.innerHTML=`<label>${label}</label><input type="range" min="${min}" max="${max}" step="${step}"><output></output>`;
+  const inp=row.querySelector('input'), out=row.querySelector('output');
+  inputs[k]={inp,out,row,min,max,held:false};
+  inp.oninput=()=>setv(k,+inp.value,'面板');
+  inp.onpointerdown=()=>inputs[k].held=true; inp.onpointerup=inp.onpointercancel=()=>inputs[k].held=false;
+  inp.ondblclick=()=>{ if(inputs[k].def!==undefined) setv(k,inputs[k].def,'面板'); };
+  $(grp).appendChild(row);
+}
+const now=()=>performance.now();
+let lastChange=null;
+function show(k){ const I=inputs[k]; if(document.activeElement!==I.inp||!I.held) I.inp.value=VAL[k]; I.out.textContent=fmt(k,VAL[k]); }
+function setv(k,v,src){ const I=inputs[k]; v=Math.max(I.min,Math.min(I.max,v)); VAL[k]=v; touched[k]=now(); show(k); send(k,v);
+  if(src) lastChange={k,v,src,t:now()}; }
+const cur=k=>VAL[k]!==undefined?VAL[k]:+inputs[k].inp.value;
+const norm=k=>{ const I=inputs[k]; return (cur(k)-I.min)/(I.max-I.min); };
+
+const pad=$('pad');
+pad.onpointerdown=e=>pad.setPointerCapture(e.pointerId);
+pad.onpointermove=e=>{ if(!(e.buttons&1)) return; let y=cur('yaw')-e.movementX*.01; if(y>3.15)y-=6.283; if(y<-3.15)y+=6.283; setv('yaw',y,'拖动区'); setv('camH',cur('camH')+e.movementY*.012,'拖动区'); };
+pad.onwheel=e=>{ setv('camD',cur('camD')*Math.exp(e.deltaY*.001),'拖动区'); e.preventDefault(); };
+pad.ondblclick=()=>{ for(const k of ['camD','camH','yaw','lookY','fov']) setv(k,inputs[k].def,'拖动区'); };
+$('auto').onclick=()=>send('auto',!(G&&G.auto));
+$('hud').onclick=()=>send('hud',!(G&&G.hud));
+$('rec').onclick=()=>bc.postMessage({t:'rec'});
+$('black').onclick=()=>bc.postMessage({t:'black'});
+
+let relay=null, lastState=null;
+bc.onmessage=ev=>{ const m=ev.data; if(!m) return;
+  if(m.t==='padraw'){ relay={...m,ts:now()}; return; }
+  if(m.t==='g'&&inputs[m.k]){ VAL[m.k]=m.v; touched[m.k]=now(); show(m.k); lastChange={k:m.k,v:m.v,src:'输出窗口鼠标',t:now()}; return; }
+  if(m.t!=='state') return; G=m.G; curScene=m.cur; lastState=m;
+  if(!built){ built=true;
+    m.names.forEach((n,i)=>{ const b=document.createElement('button'); b.textContent=(i+1)+' · '+n; b.onclick=()=>bc.postMessage({t:'scene',i,hold:true}); $('scenes').appendChild(b); });
+    for(const k in inputs){ inputs[k].def=G[k]; VAL[k]=G[k]; show(k); }
+  }
+  // the output's copy wins unless this panel changed the value a moment ago (its echo may still be in flight)
+  for(const k in inputs) if(G[k]!==undefined&&!inputs[k].held&&now()-(touched[k]||0)>400&&Math.abs(G[k]-VAL[k])>1e-6){
+    if(Math.abs(G[k]-VAL[k])>1e-3) lastChange={k,v:G[k],src:'输出窗口',t:now()}; VAL[k]=G[k]; show(k); }
+  [...$('scenes').children].forEach((b,i)=>b.classList.toggle('on',i===m.cur));
+  $('auto').classList.toggle('on',G.auto); $('auto').textContent=G.auto?'自动轮播 · '+m.left+'s':'自动轮播 (关)';
+  $('black').classList.toggle('on',G.dim<.01); $('hud').classList.toggle('on',G.hud); $('rec').classList.toggle('on',m.rec);
+  $('status').textContent=`已连接 · ${m.w}×${m.h} · ${m.fps} fps · ${m.n} strings`;
+};
+
+// ---------- MIDI: CC → slider (absolute), CC/note → button ----------
+// Defaults match Launch Control XL 3 Mode 16 (factory CCs): faders 5–12, knob rows 13–20 / 21–28 / 29–36, buttons 37–52.
+const DEFMAP={};
+['expo','white','bloom','width','density','speed','turb','dim'].forEach((k,i)=>DEFMAP['c'+(5+i)]=k);
+['camD','camH','yaw','lookY','fov','orbit','fish','pulse'].forEach((k,i)=>DEFMAP['c'+(13+i)]=k);
+['trans','dur'].forEach((k,i)=>DEFMAP['c'+(21+i)]=k);
+for(let i=0;i<9;i++) DEFMAP['c'+(37+i)]='@scene'+i;
+Object.assign(DEFMAP,{c46:'@auto',c47:'@black',c48:'@camreset',c49:'@prev',c50:'@next'});
+let MAP=JSON.parse(localStorage.getItem('strings-midi')||'null')||{...DEFMAP};
+let learning=false, learnTarget=null, midiIn='', padName='', lastMsg='', lastMidi=null, midiState='idle';
+const hits={};
+const ACT={auto:()=>$('auto').onclick(),black:()=>$('black').onclick(),camreset:()=>bc.postMessage({t:'camreset'}),
+  prev:()=>bc.postMessage({t:'scene',i:curScene-1}),next:()=>bc.postMessage({t:'scene',i:curScene+1})};
+function showDev(){ $('dev').innerHTML='MIDI: '+(midiIn||'未连接')+(lastMsg?' · '+lastMsg:'')+'<br>手柄: '+(padName||'未检测到 (按一下手柄任意键)')+
+  (learning?'<br><b style="color:#fc6">学习中: '+(learnTarget?'转动/按下要绑定到「'+learnTarget+'」的控件':'先点击一个滑杆名称或按钮')+'</b>':''); }
+function onMidi(data){
+  const st=data[0]&0xf0, num=data[1], val=data[2]||0;
+  if(st!==0xb0&&st!==0x90&&st!==0x80) return;
+  const key=(st===0xb0?'c':'n')+num, on=st!==0x80&&val>0; lastMsg=key+'='+val;
+  if(st===0xb0) hits[num]=now();
+  if(learning&&learnTarget){ if(st===0xb0||on){ for(const k in MAP) if(MAP[k]===learnTarget) delete MAP[k]; MAP[key]=learnTarget;
+      localStorage.setItem('strings-midi',JSON.stringify(MAP)); learnTarget=null; } showDev(); return; }
+  const t=MAP[key]; lastMidi={key,num,val,t,ts:now()}; showDev(); if(!t) return;
+  if(t[0]==='@'){ if(!on) return; const a=t.slice(1); if(a.startsWith('scene')) bc.postMessage({t:'scene',i:+a.slice(5),hold:true}); else ACT[a]&&ACT[a](); }
+  else if(st===0xb0&&inputs[t]){ const I=inputs[t]; setv(t,I.min+(I.max-I.min)*val/127,'MIDI CC '+num); }
+}
+async function midiConnect(){
+  if(!navigator.requestMIDIAccess){ midiState='unsupported'; midiIn='这个浏览器不支持 Web MIDI，请用 Chrome 或 Edge 打开 (双击 start.bat)'; showDev(); return; }
+  if(!isSecureContext){ midiState='unsupported'; midiIn='需要通过 http://localhost:8787 打开，不能直接双击 html 文件'; showDev(); return; }
+  midiState='asking'; midiIn='请求权限中… 如果浏览器弹窗，请点「允许」'; showDev();
+  try{ const acc=await navigator.requestMIDIAccess();
+    const hook=()=>{ const names=[]; acc.inputs.forEach(inp=>{ inp.onmidimessage=e=>onMidi(e.data); if(inp.state==='connected') names.push(inp.name); });
+      midiState=names.length?'ok':'nodevice';
+      midiIn=names.length?names.join(', '):'已授权，但没有检测到 MIDI 设备：检查 USB 线，或关闭占用它的软件 (TouchDesigner / Ableton / Components) 后点「连接 MIDI」';
+      showDev(); };
+    acc.onstatechange=hook; hook();
+  }catch(e){ midiState='denied'; midiIn='MIDI 权限被拒绝 ('+e.name+')：请用 start.bat 打开的 Chrome 窗口，或在地址栏左侧锁图标里把 MIDI 设为「允许」'; showDev(); }
+}
+$('midiBtn').onclick=midiConnect;
+const LCXL_RE=/LCXL|Launch Control/i;
+$('learn').onclick=()=>{ learning=!learning; learnTarget=null; $('learn').classList.toggle('on',learning); showDev(); };
+$('mreset').onclick=()=>{ MAP={...DEFMAP}; localStorage.removeItem('strings-midi'); showDev(); };
+document.addEventListener('click',e=>{ if(!learning) return;
+  const row=e.target.closest('.row'), b=e.target.closest('button');
+  if(row&&e.target.tagName==='LABEL') learnTarget=row.dataset.k;
+  else if(b&&b.parentElement.id==='scenes'){ learnTarget='@scene'+[...b.parentElement.children].indexOf(b); e.stopPropagation(); e.preventDefault(); }
+  else if(b&&['auto','black'].includes(b.id)){ learnTarget='@'+b.id; e.stopPropagation(); e.preventDefault(); }
+  showDev(); },true);
+midiConnect();   // granted → connects silently; otherwise Chrome shows its prompt
+
+// ---------- gamepad (standard mapping, e.g. DualSense) → camera; read here, or relayed by an output window ----------
+let padPrev=[], PAD=null;
+const VP={a:[0,0,0,0],b:new Array(17).fill(0),on:false};
+function readPad(){
+  if(VP.on) return {id:'鼠标 (示意图)',a:VP.a,b:VP.b,src:'示意图'};
+  const gp=[...(navigator.getGamepads?navigator.getGamepads():[])].find(g=>g&&g.connected&&g.mapping==='standard');
+  if(gp) return {id:gp.id,a:[...gp.axes],b:gp.buttons.map(x=>x.value),src:'面板'};
+  if(relay&&now()-relay.ts<500&&relay.id) return {id:relay.id,a:relay.a,b:relay.b,src:'经输出窗口'};
+  return null;
+}
+const dz=v=>{ v=v||0; const a=Math.abs(v); return a<.12?0:Math.sign(v)*((a-.12)/.88)**2; };
+function padStep(dt){
+  const p=readPad(); PAD=p; const name=p?p.id.replace(/\s*\(.*$/,'')+' · '+p.src:''; if(name!==padName){ padName=name; showDev(); }
+  if(!p){ padPrev=[]; return; }
+  const ax=i=>dz(p.a[i]), bt=i=>p.b[i]||0, hit=i=>bt(i)>.5&&!(padPrev[i]>.5);
+  if(ax(0)){ let y=cur('yaw')+ax(0)*1.6*dt; if(y>Math.PI)y-=2*Math.PI; if(y<-Math.PI)y+=2*Math.PI; setv('yaw',y,'手柄 左摇杆'); }
+  if(ax(1)) setv('camH',cur('camH')-ax(1)*1.5*dt,'手柄 左摇杆');
+  if(ax(2)) setv('fov',cur('fov')+ax(2)*40*dt,'手柄 右摇杆');
+  if(ax(3)) setv('lookY',cur('lookY')-ax(3)*1.2*dt,'手柄 右摇杆');
+  const tz=bt(6)-bt(7); if(Math.abs(tz)>.02) setv('camD',cur('camD')*Math.exp(tz*.9*dt),tz>0?'手柄 L2':'手柄 R2');
+  if(hit(4)||hit(14)) ACT.prev(); if(hit(5)||hit(15)) ACT.next();
+  if(hit(12)) setv('orbit',cur('orbit')+.5,'手柄 十字键'); if(hit(13)) setv('orbit',cur('orbit')-.5,'手柄 十字键');
+  if(hit(0)) ACT.auto(); if(hit(1)) ACT.black(); if(hit(3)) ACT.camreset(); if(hit(9)) $('hud').onclick();
+  padPrev=p.b.slice();
+}
+
+// ---------- live device diagrams ----------
+const NS='http://www.w3.org/2000/svg';
+const el=(p,tag,a={},txt)=>{ const e=document.createElementNS(NS,tag); for(const k in a) e.setAttribute(k,a[k]); if(txt!==undefined) e.textContent=txt; p.appendChild(e); return e; };
+const COL={cam:'#4fd1ff',look:'#ffb347',mo:'#c9a0ff',time:'#7be08a',scene:'#ff6fd8',act:'#7be08a',off:'#3a3a3a'};
+const GROUP={camD:'cam',camH:'cam',yaw:'cam',lookY:'cam',fov:'cam',orbit:'cam',expo:'look',white:'look',bloom:'look',width:'look',density:'look',dim:'look',
+  speed:'mo',turb:'mo',pulse:'mo',fish:'mo',trans:'time',dur:'time'};
+const ACTL={auto:'自动',black:'黑场',camreset:'复位',prev:'上一段',next:'下一段'};
+function tinfo(t){
+  if(!t) return {lab:'—',col:COL.off};
+  if(t[0]==='@'){ const a=t.slice(1);
+    if(a.startsWith('scene')) return {lab:'片段'+(+a.slice(5)+1),col:COL.scene,act:a};
+    return {lab:ACTL[a]||a,col:a==='black'?COL.look:a==='camreset'?COL.cam:COL.act,act:a}; }
+  return {lab:LBL[t]||t,col:COL[GROUP[t]]||'#aaa',k:t};
+}
+const LC=[], lc=$('lcxl');
+el(lc,'rect',{x:2,y:2,width:456,height:428,rx:10,fill:'#161616',stroke:'#2a2a2a'});
+el(lc,'text',{x:16,y:20,'font-size':9.5,fill:'#555','letter-spacing':2},'LAUNCH CONTROL XL 3 · MODE 16');
+const ARC=70.69;  // 270° of a r=15 circle
+for(let i=0;i<8;i++){ const x=42+i*54;
+  for(let r=0;r<3;r++){ const cc=13+8*r+i, y=50+r*56;
+    el(lc,'circle',{cx:x,cy:y,r:15,fill:'none',stroke:'#2c2c2c','stroke-width':3,'stroke-dasharray':ARC+' 200',transform:`rotate(135 ${x} ${y})`,'stroke-linecap':'round'});
+    const arc=el(lc,'circle',{cx:x,cy:y,r:15,fill:'none','stroke-width':3,transform:`rotate(135 ${x} ${y})`,'stroke-linecap':'round'});
+    const body=el(lc,'circle',{cx:x,cy:y,r:10.5,fill:'#262626'});
+    const nd=el(lc,'line',{x1:x,y1:y,x2:x,y2:y-9,'stroke-width':2,'stroke-linecap':'round'});
+    const lab=el(lc,'text',{x,y:y+28,'text-anchor':'middle','font-size':9});
+    const hit=el(lc,'circle',{cx:x,cy:y,r:19,fill:'transparent'});
+    LC.push({cc,type:'knob',x,y,arc,body,nd,lab,hit}); }
+  const cc=5+i, fy0=222, fy1=330;
+  el(lc,'rect',{x:x-3,y:fy0,width:6,height:fy1-fy0,rx:3,fill:'#262626'});
+  const fill=el(lc,'rect',{x:x-3,width:6,rx:3}), cap=el(lc,'rect',{x:x-13,width:26,height:10,rx:2,fill:'#3c3c3c'});
+  const lab=el(lc,'text',{x,y:fy1+17,'text-anchor':'middle','font-size':9});
+  const hit=el(lc,'rect',{x:x-16,y:fy0-4,width:32,height:fy1-fy0+8,fill:'transparent'});
+  LC.push({cc,type:'fader',x,fy0,fy1,fill,cap,lab,hit});
+  for(let r=0;r<2;r++){ const cc=37+8*r+i, y=362+r*32;
+    const b=el(lc,'rect',{x:x-23,y,width:46,height:24,rx:3,'stroke-width':1.2});
+    const lab=el(lc,'text',{x,y:y+15.5,'text-anchor':'middle','font-size':9,'pointer-events':'none'});
+    LC.push({cc,type:'btn',b,lab}); }
+}
+for(const c of LC){ c.lab&&c.lab.setAttribute('pointer-events','none'); bindLC(c); }
+{
+}
+// mouse on the diagram behaves like the hardware: knobs drag vertically, faders follow the pointer, buttons press
+const svgY=(svg,e)=>{ const pt=svg.createSVGPoint(); pt.x=e.clientX; pt.y=e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()).y; };
+function ctlTarget(c){ return tinfo(MAP['c'+c.cc]); }
+function bindLC(c){
+  const hitEl=c.type==='knob'?c.hit:c.type==='fader'?c.hit:c.b;
+  hitEl.style.cursor=c.type==='btn'?'pointer':c.type==='knob'?'ns-resize':'grab';
+  hitEl.addEventListener('pointerdown',e=>{ e.preventDefault(); hitEl.setPointerCapture(e.pointerId); hits[c.cc]=now();
+    if(learning&&learnTarget){ onMidi([0xb0,c.cc,127]); return; }
+    const t=ctlTarget(c);
+    if(c.type==='btn'){ if(t.act) onMidi([0xb0,c.cc,127]); return; }
+    if(!t.k) return;
+    c.drag={y:e.clientY,n:norm(t.k)};
+    if(c.type==='fader') moveFader(c,e); });
+  hitEl.addEventListener('pointermove',e=>{ if(!c.drag) return; hits[c.cc]=now();
+    if(c.type==='fader') return moveFader(c,e);
+    const n=Math.max(0,Math.min(1,c.drag.n-(e.clientY-c.drag.y)/160)); onMidi([0xb0,c.cc,Math.round(n*127)]); });
+  const end=()=>{ c.drag=null; }; hitEl.addEventListener('pointerup',end); hitEl.addEventListener('pointercancel',end);
+  hitEl.addEventListener('wheel',e=>{ const t=ctlTarget(c); if(!t.k||c.type==='btn') return; e.preventDefault(); hits[c.cc]=now();
+    onMidi([0xb0,c.cc,Math.round(Math.max(0,Math.min(1,norm(t.k)-Math.sign(e.deltaY)/40))*127)]); },{passive:false});
+}
+function moveFader(c,e){ const y=svgY(lc,e), n=Math.max(0,Math.min(1,(c.fy1-5-y)/(c.fy1-c.fy0-10))); onMidi([0xb0,c.cc,Math.round(n*127)]); }
+function drawLC(){
+  const t0=now();
+  for(const c of LC){ const t=tinfo(MAP['c'+c.cc]), hot=t0-(hits[c.cc]||0)<260;
+    if(c.type==='knob'){ const n=t.k?norm(t.k):0;
+      c.arc.setAttribute('stroke',t.k?t.col:'none'); c.arc.setAttribute('stroke-dasharray',(ARC*n).toFixed(2)+' 200');
+      c.nd.setAttribute('stroke',t.k?'#eee':'#4a4a4a'); c.nd.setAttribute('transform',`rotate(${(-135+270*n).toFixed(1)} ${c.x} ${c.y})`);
+      c.body.setAttribute('fill',hot?'#5a5a5a':'#262626'); c.lab.textContent=t.lab; c.lab.setAttribute('fill',t.k?t.col:'#4a4a4a');
+    }else if(c.type==='fader'){ const n=t.k?norm(t.k):0, span=c.fy1-c.fy0-10, cy=c.fy1-10-n*span;
+      c.cap.setAttribute('y',cy.toFixed(1)); c.cap.setAttribute('stroke',hot?'#fff':t.k?t.col:'#555');
+      c.fill.setAttribute('y',(cy+5).toFixed(1)); c.fill.setAttribute('height',Math.max(0,c.fy1-cy-5).toFixed(1)); c.fill.setAttribute('fill',t.k?t.col:'none');
+      c.lab.textContent=t.lab; c.lab.setAttribute('fill',t.k?t.col:'#4a4a4a');
+    }else{ const a=t.act, on=!!a&&(a.startsWith('scene')?curScene===+a.slice(5):a==='auto'?!!(G&&G.auto):a==='black'?!!(G&&G.dim<.01):false);
+      c.b.setAttribute('fill',on?t.col:hot?'#4a4a4a':'#1d1d1d'); c.b.setAttribute('stroke',hot?'#fff':a?t.col:'#333');
+      c.lab.textContent=t.lab; c.lab.setAttribute('fill',on?'#000':a?t.col:'#4a4a4a'); }
+  }
+  let s='';
+  if(lastMidi&&t0-lastMidi.ts<4000){ const t=tinfo(lastMidi.t); s='最近 MIDI: <b>'+lastMidi.key.replace('c','CC ').replace('n','Note ')+' = '+lastMidi.val+'</b> → '+
+    (t.k?'<b style="color:'+t.col+'">'+LBL[t.k]+' '+fmt(t.k,cur(t.k))+'</b>':t.act?'<b style="color:'+t.col+'">'+t.lab+'</b>':'未分配'); }
+  else s='MIDI: <b style="color:'+({ok:'#7be08a',denied:'#ff6b6b',unsupported:'#ff6b6b',nodevice:'#ffb347'}[midiState]||'#888')+'">'+(midiIn||'未连接 (点「连接 MIDI」)')+'</b>';
+  if(lastChange&&t0-lastChange.t<4000) s+='<br>最近改动: <b>'+LBL[lastChange.k]+' '+fmt(lastChange.k,lastChange.v)+'</b> · 来源 '+lastChange.src;
+  $('lcinfo').innerHTML=s;
+  for(const k in inputs) inputs[k].row.classList.toggle('hot',!!lastChange&&lastChange.k===k&&t0-lastChange.t<700);
+}
+// DualSense
+const ds=$('ds'), D={};
+el(ds,'path',{d:'M92,58 Q122,40 172,44 L288,44 Q338,40 368,58 Q418,88 438,196 Q448,262 410,268 Q384,270 360,228 L330,192 L130,192 L100,228 Q76,270 50,268 Q12,262 22,196 Q42,88 92,58 Z',fill:'#1c1d21',stroke:'#34363c','stroke-width':1.5});
+el(ds,'rect',{x:172,y:50,width:116,height:66,rx:8,fill:'#24262b',stroke:'#34363c'});
+const trig=(x,lab,col)=>{ el(ds,'rect',{x,y:6,width:96,height:8,rx:4,fill:'#24262b'}); const f=el(ds,'rect',{x,y:6,width:0,height:8,rx:4,fill:col});
+  el(ds,'text',{x:x+48,y:27,'text-anchor':'middle','font-size':9,fill:col},lab); return f; };
+D.l2=trig(70,'L2 拉远',COL.cam); D.r2=trig(294,'R2 推近',COL.cam);
+D.l1=el(ds,'rect',{x:84,y:34,width:68,height:7,rx:3}); D.r1=el(ds,'rect',{x:308,y:34,width:68,height:7,rx:3});
+el(ds,'text',{x:118,y:54,'text-anchor':'middle','font-size':8,fill:'#888'},'L1 上一段'); el(ds,'text',{x:342,y:54,'text-anchor':'middle','font-size':8,fill:'#888'},'R1 下一段');
+D.dp={12:el(ds,'rect',{x:107,y:80,width:16,height:18,rx:3}),13:el(ds,'rect',{x:107,y:114,width:16,height:18,rx:3}),14:el(ds,'rect',{x:88,y:98,width:18,height:16,rx:3}),15:el(ds,'rect',{x:124,y:98,width:18,height:16,rx:3})};
+el(ds,'text',{x:115,y:146,'text-anchor':'middle','font-size':8,fill:'#888'},'↑↓ 自动旋转 · ←→ 换段');
+const face=[[0,345,128,'×','轮播',COL.time],[1,368,105,'○','黑场',COL.look],[2,322,105,'□','',COL.off],[3,345,82,'△','复位',COL.cam]];
+D.face={};
+for(const [i,x,y,sym,lab,col] of face){ D.face[i]={c:el(ds,'circle',{cx:x,cy:y,r:10,'stroke-width':1.3}),col};
+  D.face[i].s=el(ds,'text',{x,y:y+4,'text-anchor':'middle','font-size':11},sym);
+  if(lab) el(ds,'text',{x:x+(x>345?0:x<345?0:0),y:y+(i===3?-14:i===0?24:0),dx:i===1?26:0,'text-anchor':'middle','font-size':8,fill:col},lab); }
+D.opt=el(ds,'rect',{x:302,y:60,width:9,height:15,rx:4}); el(ds,'text',{x:306,y:88,'text-anchor':'middle','font-size':7,fill:'#777'},'HUD');
+const stick=(x,y,col,l1,l2)=>{ el(ds,'circle',{cx:x,cy:y,r:25,fill:'#141518',stroke:'#34363c'}); el(ds,'line',{x1:x-20,y1:y,x2:x+20,y2:y,stroke:'#26282d'}); el(ds,'line',{x1:x,y1:y-20,x2:x,y2:y+20,stroke:'#26282d'});
+  const dot=el(ds,'circle',{cx:x,cy:y,r:9,fill:'#3a3c42',stroke:col,'stroke-width':1.5});
+  el(ds,'text',{x,y:y+40,'text-anchor':'middle','font-size':8.5,fill:col},l1); const v=el(ds,'text',{x,y:y+52,'text-anchor':'middle','font-size':8.5,fill:'#bbb'}); return {x,y,dot,v,l2}; };
+D.ls=stick(172,160,COL.cam,'左摇杆 环绕 / 升降'); D.rs=stick(288,160,COL.cam,'右摇杆 视角 / 视点');
+D.cd=el(ds,'text',{x:230,y:140,'text-anchor':'middle','font-size':9,fill:'#bbb'});
+D.state=el(ds,'text',{x:230,y:290,'text-anchor':'middle','font-size':9,fill:'#666'});
+function bindDS(){
+  const grab=(node,onMove,onEnd)=>{ node.style.cursor='grab';
+    node.addEventListener('pointerdown',e=>{ e.preventDefault(); node.setPointerCapture(e.pointerId); VP.on=true; onMove(e); });
+    node.addEventListener('pointermove',e=>{ if(node.hasPointerCapture(e.pointerId)) onMove(e); });
+    const up=e=>{ onEnd(); if(!VP.a.some(v=>v)&&!VP.b.some(v=>v)) setTimeout(()=>{ if(!VP.a.some(v=>v)&&!VP.b.some(v=>v)) VP.on=false; },120); };
+    node.addEventListener('pointerup',up); node.addEventListener('pointercancel',up); };
+  const pt=e=>{ const p=ds.createSVGPoint(); p.x=e.clientX; p.y=e.clientY; return p.matrixTransform(ds.getScreenCTM().inverse()); };
+  for(const [s,ix,iy] of [[D.ls,0,1],[D.rs,2,3]]){
+    const h=el(ds,'circle',{cx:s.x,cy:s.y,r:28,fill:'transparent'});
+    grab(h,e=>{ const p=pt(e); let dx=(p.x-s.x)/18, dy=(p.y-s.y)/18; const m=Math.hypot(dx,dy); if(m>1){dx/=m;dy/=m;} VP.a[ix]=dx; VP.a[iy]=dy; },()=>{ VP.a[ix]=0; VP.a[iy]=0; }); }
+  for(const [x,i] of [[70,6],[294,7]]){ const h=el(ds,'rect',{x,y:0,width:96,height:30,fill:'transparent'});
+    grab(h,e=>{ VP.b[i]=Math.max(0,Math.min(1,(pt(e).x-x)/96)); },()=>{ VP.b[i]=0; }); }
+  const press=(node,i)=>{ node.style.cursor='pointer'; node.addEventListener('pointerdown',e=>{ e.preventDefault(); VP.on=true; VP.b[i]=1; });
+    const up=()=>{ setTimeout(()=>{ VP.b[i]=0; setTimeout(()=>{ if(!VP.a.some(v=>v)&&!VP.b.some(v=>v)) VP.on=false; },120); },60); };
+    node.addEventListener('pointerup',up); node.addEventListener('pointerleave',()=>{ if(VP.b[i]) up(); }); };
+  press(D.l1,4); press(D.r1,5); press(D.opt,9); for(const i in D.dp) press(D.dp[i],+i); for(const i in D.face) press(D.face[i].c,+i);
+  for(const i in D.face) D.face[i].s.setAttribute('pointer-events','none');
+}
+bindDS();
+function drawDS(){
+  const p=PAD, b=i=>p?(p.b[i]||0):0, a=i=>p?(p.a[i]||0):0;
+  D.l2.setAttribute('width',(96*b(6)).toFixed(1)); D.r2.setAttribute('width',(96*b(7)).toFixed(1));
+  for(const [r,i] of [[D.l1,4],[D.r1,5]]){ r.setAttribute('fill',b(i)>.5?COL.scene:'#2a2c31'); }
+  for(const i in D.dp) D.dp[i].setAttribute('fill',b(+i)>.5?(i<14?COL.time:COL.scene):'#2a2c31');
+  for(const i in D.face){ const f=D.face[i], on=b(+i)>.5; f.c.setAttribute('fill',on?f.col:'#24262b'); f.c.setAttribute('stroke',f.col); f.s.setAttribute('fill',on?'#000':f.col); }
+  D.opt.setAttribute('fill',b(9)>.5?'#ddd':'#2a2c31');
+  for(const [s,ix,iy] of [[D.ls,0,1],[D.rs,2,3]]){ s.dot.setAttribute('cx',(s.x+a(ix)*15).toFixed(1)); s.dot.setAttribute('cy',(s.y+a(iy)*15).toFixed(1));
+    s.dot.setAttribute('fill',Math.hypot(dz(a(ix)),dz(a(iy)))>0?COL.cam:'#3a3c42'); }
+  D.ls.v.textContent='环绕 '+fmt('yaw',cur('yaw'))+' · 高度 '+fmt('camH',cur('camH'));
+  D.rs.v.textContent='视角 '+fmt('fov',cur('fov'))+'° · 视点 '+fmt('lookY',cur('lookY'));
+  D.cd.textContent='距离 '+fmt('camD',cur('camD'))+' · 自动旋转 '+fmt('orbit',cur('orbit'));
+  D.state.textContent=p?('已连接 '+padName):'手柄未连接 · 连接后按一下任意键 · 也可以直接用鼠标拖动摇杆 / 扳机、点按键';
+  D.state.setAttribute('fill',p?COL.time:'#666');
+  $('dsinfo').innerHTML=lastChange&&/手柄|拖动|鼠标/.test(lastChange.src)&&now()-lastChange.t<4000?'最近镜头改动: <b>'+LBL[lastChange.k]+' '+fmt(lastChange.k,lastChange.v)+'</b> · 来源 '+lastChange.src:'';
+}
+let lastT=now();
+function loop(t){ requestAnimationFrame(loop); const dt=Math.min(.05,Math.max(0,(t-lastT)/1000)); lastT=t; padStep(dt); drawLC(); drawDS(); }
+requestAnimationFrame(loop);
+showDev();
+bc.postMessage({t:'hello'});
+</script>
+</body>
+</html>

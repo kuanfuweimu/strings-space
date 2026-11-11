@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>STRINGS · output</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  canvas{display:block;width:100vw;height:100vh;object-fit:contain}
+  #hud{position:fixed;left:18px;bottom:14px;font:12px/1.6 ui-monospace,Consolas,monospace;color:#8a8a8a;
+       letter-spacing:.06em;user-select:none;transition:opacity .6s}
+  #hud b{color:#ddd;font-weight:500}
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#f66;font:14px monospace;white-space:pre-wrap;padding:40px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="err"></div>
+<script>
+'use strict';
+const q = new URLSearchParams(location.search);
+const ROWS = 10000, COLS = 4, MAXN = ROWS*COLS, BASE = 4000;   // density 1 = BASE strings, up to MAXN
+const N = MAXN;
+const SEG = +(q.get('seg') || 128);       // points per string
+const RENDER = q.get('render') === '1';   // offline export mode (needs server.js)
+
+const canvas = document.getElementById('c');
+const hud = document.getElementById('hud');
+const gl = canvas.getContext('webgl2', {antialias:false, alpha:false, powerPreference:'high-performance', preserveDrawingBuffer:true});
+function fail(m){ const e=document.getElementById('err'); e.style.display='flex'; e.textContent=m; throw new Error(m); }
+if(!gl) fail('WebGL2 not available');
+if(!gl.getExtension('EXT_color_buffer_float')) fail('EXT_color_buffer_float not available');
+
+// ---------- scenes ----------
+const KEYS=['na','nf','ns','swirl','rad','radAx','up','pull','lifeMin','lifeRange','spawn','pulseAmt','advect','len','glow','width',
+            'hist','speed','pulseHz','expo','fish','camD','camH','orbit','lookY','chase'];
+const DEF={na:.3,nf:.7,ns:.05,swirl:0,rad:0,radAx:0,up:0,pull:.6,lifeMin:4,lifeRange:5,spawn:1,pulseAmt:0,advect:.25,len:1,glow:.2,width:1.1,
+           hist:24,speed:1,pulseHz:.25,expo:1,fish:0,camD:3.0,camH:.25,orbit:.035,lookY:-.05,chase:0};
+const NP=KEYS.length;
+const S=(name,mode,o)=>({name,mode,P:KEYS.map(k=>(k in o?o[k]:DEF[k]))});
+const SCENES=[
+  S('VORTEX 漩涡',0,{na:.3,swirl:.55,radAx:.24,spawn:1.2,hist:20,glow:.15}),
+  S('GROWTH 生长',1,{camD:3.7,na:.42,nf:.8,ns:.03,swirl:.08,up:.3,pull:.5,lifeMin:7,lifeRange:6,spawn:.5,pulseAmt:.7,advect:.04,glow:.9,width:1.2,hist:10,pulseHz:.18,expo:1.1}),
+  S('PULSE 脉冲',2,{na:.28,nf:1,ns:.06,swirl:.22,rad:.42,pull:.8,lifeMin:3,lifeRange:3,spawn:3,pulseAmt:1,advect:.35,len:.85,glow:1,pulseHz:.3,expo:1.2}),
+  S('DRIFT 漂流',3,{na:.5,nf:.6,ns:.04,swirl:.12,pull:.8,lifeMin:5,lifeRange:6,advect:.6,len:.4,glow:.25,width:1.3,expo:2.2}),
+  S('VEIL 帷幕',4,{camD:3.7,na:.22,nf:.9,ns:.04,swirl:.05,up:-.38,pull:.2,lifeMin:8,lifeRange:4,spawn:.8,pulseAmt:.5,pulseHz:.15,advect:.12,glow:.6,hist:12,expo:1.2}),
+  S('RIBBON 丝带',5,{na:.25,nf:.8,chase:1.3,pull:.3,lifeMin:9,lifeRange:6,advect:.1,glow:.35,camD:3.2,expo:1.2}),
+  S('DOME 穹顶 · fisheye',6,{fish:1,na:.2,swirl:.7,radAx:-.16,pull:.3,lifeMin:6,lifeRange:5,spawn:1.2,advect:.3,hist:16,camD:.35,camH:-1.5,lookY:1,orbit:.05,expo:1.3}),
+  S('CANOPY 林冠 · fisheye',7,{fish:1,na:.4,nf:.8,ns:.03,swirl:.1,radAx:-.05,up:.34,pull:.5,lifeMin:8,lifeRange:6,spawn:.5,pulseAmt:.6,advect:.04,glow:.9,width:1.2,hist:10,pulseHz:.18,camD:.3,camH:-1.35,lookY:1,orbit:.03,expo:1.2}),
+  S('NEBULA 星云 · fisheye',3,{fish:1,na:.55,nf:.5,swirl:.2,pull:.8,lifeMin:6,lifeRange:6,advect:.5,glow:.4,camD:.5,camH:0,lookY:.2,orbit:.06,expo:1.0}),
+];
+// live globals, driven by control.html over BroadcastChannel
+const G={dim:1,expo:1,white:.88,bloom:1,width:1,speed:1,turb:1,density:+(q.get('density')||3),fish:-1,orbit:1,pulse:1,trans:3.5,dur:45,camD:1,camH:0,yaw:0,lookY:0,fov:50,auto:q.get('auto')!=='0',hud:q.get('hud')==='1'};
+
+// ---------- shaders ----------
+const VS_FULL = `#version 300 es
+void main(){ vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position=vec4(p*2.-1.,0,1); }`;
+
+const FS_SIM = `#version 300 es
+precision highp float;
+uniform sampler2D uS;
+uniform float uT,uDt,uShift,uSeed,uMode,uActive;
+uniform float uP[${NP}];
+out vec4 o;
+const int SEGC=${SEG}, ROWS=${ROWS};
+float h1(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+vec3 h3(vec2 p){ return vec3(h1(p),h1(p+17.1),h1(p+41.7)); }
+const mat3 R=mat3(0.,.8,.6,-.8,.36,-.48,-.6,-.48,.64);
+const vec3 AX=vec3(.3304,.9441,.1888);
+vec3 pot(vec3 p){
+  vec3 s=vec3(0.); float a=1.; p*=uP[1];
+  for(int i=0;i<3;i++){ p=R*p*1.7+vec3(0.,uT*uP[2],3.1); s+=a*sin(p.yzx+1.3*cos(p.zxy)); a*=.55; }
+  return s;
+}
+vec3 curl(vec3 p){
+  const float e=.02;
+  vec3 dx=pot(p+vec3(e,0,0))-pot(p-vec3(e,0,0));
+  vec3 dy=pot(p+vec3(0,e,0))-pot(p-vec3(0,e,0));
+  vec3 dz=pot(p+vec3(0,0,e))-pot(p-vec3(0,0,e));
+  return vec3(dy.z-dz.y, dz.x-dx.z, dx.y-dy.x)/(2.*e*uP[1]*4.);
+}
+vec3 emitter(){ return vec3(1.5*sin(.37*uT),.8*sin(.53*uT+1.),.9*sin(.29*uT+2.)); }
+vec3 vel(vec3 p,float id){
+  vec3 v=curl(p)*uP[0];
+  float h=dot(p,AX); vec3 rp=p-AX*h; float r=length(rp);
+  v+=uP[3]*cross(AX,rp)/(.25+1.2*r*r);
+  v+=uP[5]*rp/(r+.15);
+  v+=uP[4]*p/(length(p)+.1);
+  v.y+=uP[6]*(uP[6]>0.?smoothstep(1.7,-.6,p.y):smoothstep(-1.7,.6,p.y));
+  v-=uP[7]*p*smoothstep(1.2,2.4,length(p));
+  v+=uP[25]*(emitter()+(h3(vec2(id,23.))-.5)*vec3(.9,.5,.5)-p);
+  return v;
+}
+vec3 spawn(vec3 r){
+  if(uMode<.5){
+    vec3 u=normalize(cross(AX,vec3(1,0,0))), w=cross(AX,u);
+    float a=r.x*6.2832, rr=.04+.22*sqrt(r.y);
+    return AX*(r.z-.5)*1.5+(u*cos(a)+w*sin(a))*rr;
+  }else if(uMode<1.5){
+    float k=floor(r.x*9.)+floor(uT/30.)*13.;
+    vec2 c=(vec2(h1(vec2(k,3.)),h1(vec2(k,9.)))-.5);
+    return vec3(c.x*3.4,-1.45,c.y*1.5)+vec3(r.y-.5,0.,r.z-.5)*.16;
+  }else if(uMode<2.5){
+    float z=r.x*2.-1., a=r.y*6.2832, s=sqrt(1.-z*z);
+    return vec3(s*cos(a),z,s*sin(a))*(.12+.1*r.z);
+  }else if(uMode<3.5){
+    return (r-.5)*vec3(4.4,2.8,3.2);
+  }else if(uMode<4.5){
+    float x=(r.x-.5)*4.8;
+    return vec3(x,1.75+.05*r.z,.55*sin(x*1.3+uT*.12)+(r.y-.5)*.06);
+  }else if(uMode<5.5){
+    return emitter()+(r-.5)*.6;
+  }else if(uMode<6.5){
+    vec3 u=normalize(cross(AX,vec3(1,0,0))), w=cross(AX,u);
+    float a=r.x*6.2832, rr=1.7+.5*r.y;
+    return AX*(r.z-.5)*.7+(u*cos(a)+w*sin(a))*rr;
+  }
+  float k=floor(r.x*9.), a=(k+.5*h1(vec2(k,3.)+floor(uT/30.)))/9.*6.2832, rr=1.0+.6*h1(vec2(k,9.));
+  return vec3(cos(a)*rr,-1.45,sin(a)*rr)+vec3(r.y-.5,0.,r.z-.5)*.16;
+}
+void main(){
+  ivec2 c=ivec2(gl_FragCoord.xy); int kx=c.x%SEGC; float id=float((c.x/SEGC)*ROWS+c.y);
+  if(id>=uActive){ o=vec4(0.,0.,0.,-1.); return; }
+  float sp=uP[17]*(.6+.8*h1(vec2(id,7.)));
+  if(kx==0){
+    vec4 s=texelFetch(uS,c,0);
+    if(s.w<0.){
+      float env=mix(1., pow(.5+.5*cos(6.2832*uT*uP[18]),8.)*6., uP[11]);
+      if(h1(vec2(id,uSeed))<uP[10]*uDt*env) s=vec4(spawn(h3(vec2(id,uSeed+3.7))),0.);
+    }else{
+      s.xyz+=vel(s.xyz,id)*sp*uDt; s.w+=uDt;
+      if(s.w>uP[8]+uP[9]*h1(vec2(id,11.))) s.w=-1.;
+    }
+    o=s;
+  }else{
+    vec4 s=uShift>.5?texelFetch(uS,c-ivec2(1,0),0):texelFetch(uS,c,0);
+    if(s.w>=0.) s.xyz+=(vel(s.xyz,id)-uP[25]*(emitter()-s.xyz))*sp*uDt*uP[12];
+    o=s;
+  }
+}`;
+
+const VS_LINE = `#version 300 es
+precision highp float;
+uniform sampler2D uS; uniform mat4 uV; uniform vec2 uRes; uniform float uT,uPx,uF,uAspect,uDens;
+uniform float uP[${NP}];
+out float vA; out float vSide;
+const int ROWS=${ROWS};
+float h1(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+// returns ndc.xy, distance; ok=0 when the point cannot be shown
+vec3 proj(vec3 p,out float ok){
+  vec3 v=(uV*vec4(p,1.)).xyz; float d=length(v), z=-v.z, fish=uP[20];
+  vec2 pp=v.xy*uF/max(z,.05);
+  float th=acos(clamp(z/max(d,1e-5),-1.,1.)), rl=length(v.xy);
+  vec2 fp=rl>1e-5?v.xy/rl*th/1.2217:vec2(0.);
+  ok=(fish<.999?step(.15,z):1.)*step(th,2.7)*step(.05,d);
+  vec2 n=mix(pp,fp,fish); n.x/=uAspect;
+  return vec3(n,d);
+}
+void main(){
+  const int S=${SEG};
+  int k=gl_InstanceID%(S-1), i=gl_InstanceID/(S-1);
+  ivec2 t=ivec2((i/ROWS)*S+k,i%ROWS);
+  vec4 a=texelFetch(uS,t,0), b=texelFetch(uS,t+ivec2(1,0),0);
+  float side=(gl_VertexID&1)==0?-1.:1., end=gl_VertexID<2?0.:1.;
+  float oka,okb; vec3 na=proj(a.xyz,oka), nb=proj(b.xyz,okb);
+  bool ok=a.w>=0.&&b.w>=0.&&a.w>=b.w&&oka*okb>.5;
+  if(!ok){ gl_Position=vec4(2.,2.,2.,1.); vA=0.; vSide=0.; return; }
+  vec2 d=(nb.xy-na.xy)*uRes; float L=length(d);
+  vec2 n=L>1e-4?vec2(-d.y,d.x)/L:vec2(0.,1.);
+  vec3 cp=mix(na,nb,end);
+  float wpx=uP[15]*uPx*clamp(3.6/cp.z,.5,2.5);
+  gl_Position=vec4(cp.xy+n*side*wpx/uRes,0.,1.);
+  float id=float(i), u=(float(k)+end)/float(S), age=mix(a.w,b.w,end);
+  float fade=smoothstep(uP[13],uP[13]*.55,u)*smoothstep(0.,.25,age+u);
+  float pulse=1.+uP[14]*5.*pow(.5+.5*sin(age*2.2-uT*1.8+h1(vec2(id,5.))*1.5),14.);
+  float depth=exp(-.32*max(cp.z-2.4,0.));
+  vA=fade*pulse*depth*(.25+.75*h1(vec2(id,2.)))*.2*uDens;
+  vSide=side;
+}`;
+const FS_LINE = `#version 300 es
+precision highp float; in float vA; in float vSide; out vec4 o;
+void main(){ float e=1.-vSide*vSide; o=vec4(vec3(vA*e),1.); }`;
+
+const FS_GAUSS = `#version 300 es
+precision highp float; uniform sampler2D uTex; uniform vec2 uStep; uniform vec2 uInv; out vec4 o;
+void main(){
+  vec2 uv=gl_FragCoord.xy*uInv; vec3 c=texture(uTex,uv).rgb*.227;
+  c+=(texture(uTex,uv+uStep*1.385).rgb+texture(uTex,uv-uStep*1.385).rgb)*.316;
+  c+=(texture(uTex,uv+uStep*3.231).rgb+texture(uTex,uv-uStep*3.231).rgb)*.070;
+  o=vec4(c,1.);
+}`;
+// Reinhard curve with a white ceiling: dense bundles keep gradation instead of clipping
+const FS_COMP = `#version 300 es
+precision highp float; uniform sampler2D uScene,uB1,uB3; uniform vec2 uInv; uniform float uExp,uWhite,uBloom,uDim; out vec4 o;
+void main(){
+  vec2 uv=gl_FragCoord.xy*uInv;
+  vec3 c=texture(uScene,uv).rgb+(texture(uB1,uv).rgb*.35+texture(uB3,uv).rgb*.5)*uBloom;
+  c*=uExp; c=c/(1.+c)*uWhite;
+  vec2 q=uv-.5; c*=1.-.8*dot(q,q);
+  o=vec4(c*uDim,1.);
+}`;
+
+function sh(type,src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) fail(gl.getShaderInfoLog(s)); return s; }
+function prog(vs,fs){ const p=gl.createProgram(); gl.attachShader(p,sh(gl.VERTEX_SHADER,vs)); gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(p); if(!gl.getProgramParameter(p,gl.LINK_STATUS)) fail(gl.getProgramInfoLog(p));
+  const u={}; const n=gl.getProgramParameter(p,gl.ACTIVE_UNIFORMS);
+  for(let i=0;i<n;i++){ const nm=gl.getActiveUniform(p,i).name.replace('[0]',''); u[nm]=gl.getUniformLocation(p,nm); }
+  return {p,u}; }
+const pSim=prog(VS_FULL,FS_SIM), pLine=prog(VS_LINE,FS_LINE), pGauss=prog(VS_FULL,FS_GAUSS), pComp=prog(VS_FULL,FS_COMP);
+
+function target(w,h,ifmt,fmt,type,filter,data){
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,ifmt,w,h,0,fmt,type,data||null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,filter); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,filter);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  const f=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);
+  return {t,f,w,h};
+}
+const SW=SEG*COLS;
+const init=new Float32Array(SW*ROWS*4); for(let i=3;i<init.length;i+=4) init[i]=-1;
+let simA=target(SW,ROWS,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST,init), simB=target(SW,ROWS,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST,init);
+const active=()=>Math.max(0,Math.min(MAXN,Math.round(BASE*G.density)));
+function resetSim(){ for(const s of [simA,simB]){ gl.bindTexture(gl.TEXTURE_2D,s.t); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA32F,SW,ROWS,0,gl.RGBA,gl.FLOAT,init); } }
+
+let W=0,H=0,scene,bl=[];
+function setSize(w,h){
+  if(w===W&&h===H) return; W=w;H=h; canvas.width=w; canvas.height=h;
+  for(const t of [scene,...bl.flat()]) if(t){ gl.deleteTexture(t.t); gl.deleteFramebuffer(t.f); }
+  const mk=(d)=>target(Math.max(2,w>>d),Math.max(2,h>>d),gl.RGBA16F,gl.RGBA,gl.HALF_FLOAT,gl.LINEAR);
+  scene=mk(0); bl=[1,2,3].map(d=>[mk(d),mk(d)]);
+}
+function resize(){ const dpr=Math.min(window.devicePixelRatio||1,2); setSize(Math.max(2,Math.round(innerWidth*dpr)),Math.max(2,Math.round(innerHeight*dpr))); }
+
+function lookAt(e,c){ let z=[e[0]-c[0],e[1]-c[1],e[2]-c[2]]; let l=Math.hypot(...z); z=z.map(v=>v/l);
+  let x=[z[2],0,-z[0]]; l=Math.hypot(...x)||1; x=x.map(v=>v/l);
+  const y=[z[1]*x[2]-z[2]*x[1], z[2]*x[0]-z[0]*x[2], z[0]*x[1]-z[1]*x[0]];
+  return new Float32Array([x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0, -(x[0]*e[0]+x[1]*e[1]+x[2]*e[2]),-(y[0]*e[0]+y[1]*e[1]+y[2]*e[2]),-(z[0]*e[0]+z[1]*e[1]+z[2]*e[2]),1]); }
+
+// ---------- state ----------
+let cur=Math.min(SCENES.length-1,Math.max(0,(+(q.get('scene')||1))-1)), sceneT=0;
+const P=Float32Array.from(SCENES[cur].P), Pe=new Float32Array(NP);
+let T=0, acc=0, frame=0, fps=60, camA=.6, dimNow=1;
+function go(i){ cur=(i+SCENES.length)%SCENES.length; sceneT=0; }
+
+function fullTri(){ gl.drawArrays(gl.TRIANGLES,0,3); }
+function pass(src,dst,sx,sy){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,dst.f); gl.viewport(0,0,dst.w,dst.h); gl.bindTexture(gl.TEXTURE_2D,src.t);
+  gl.uniform2f(pGauss.u.uInv,1/dst.w,1/dst.h); gl.uniform2f(pGauss.u.uStep,sx/dst.w,sy/dst.h); fullTri();
+}
+
+function stepSim(dt){
+  T+=dt; frame++;
+  const Sc=SCENES[cur], k=G.trans>0?1-Math.exp(-dt/G.trans):1;
+  for(let i=0;i<NP;i++) P[i]+=(Sc.P[i]-P[i])*k;
+  Pe.set(P); Pe[0]*=G.turb; Pe[15]*=G.width; Pe[18]*=G.pulse; Pe[19]*=G.expo; if(G.fish>=0) Pe[20]=G.fish;
+  camA+=dt*P[23]*G.orbit;
+  acc+=dt*P[16]; let shift=0; if(acc>=1){ acc=Math.min(acc-1,1); shift=1; }
+  gl.disable(gl.BLEND);
+  gl.useProgram(pSim.p); gl.bindFramebuffer(gl.FRAMEBUFFER,simB.f); gl.viewport(0,0,SW,ROWS);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,simA.t); gl.uniform1i(pSim.u.uS,0);
+  gl.uniform1f(pSim.u.uT,T); gl.uniform1f(pSim.u.uDt,dt); gl.uniform1f(pSim.u.uShift,shift);
+  gl.uniform1f(pSim.u.uSeed,(frame%9973)*.37+1.); gl.uniform1f(pSim.u.uMode,Sc.mode); gl.uniform1f(pSim.u.uActive,active()); gl.uniform1fv(pSim.u.uP,Pe);
+  fullTri(); [simA,simB]=[simB,simA];
+}
+
+function draw(){
+  const az=camA+G.yaw, cd=P[21]*G.camD;
+  const e=[Math.sin(az)*cd, P[22]+G.camH+.3*Math.sin(T*.021)*(1-Pe[20]), Math.cos(az)*cd];
+  gl.bindFramebuffer(gl.FRAMEBUFFER,scene.f); gl.viewport(0,0,W,H); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
+  gl.useProgram(pLine.p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,simA.t); gl.uniform1i(pLine.u.uS,0);
+  gl.uniformMatrix4fv(pLine.u.uV,false,lookAt(e,[0,P[24]+G.lookY,0])); gl.uniform2f(pLine.u.uRes,W/2,H/2);
+  gl.uniform1f(pLine.u.uF,1/Math.tan(G.fov*Math.PI/360)); gl.uniform1f(pLine.u.uAspect,W/H);
+  gl.uniform1f(pLine.u.uT,T); gl.uniform1f(pLine.u.uPx,H/1080); gl.uniform1f(pLine.u.uDens,1/Math.sqrt(Math.max(1,G.density))); gl.uniform1fv(pLine.u.uP,Pe);
+  if(active()>0) gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,active()*(SEG-1));
+  gl.disable(gl.BLEND);
+
+  gl.useProgram(pGauss.p); gl.uniform1i(pGauss.u.uTex,0);
+  let src=scene;
+  for(const [a,b] of bl){ pass(src,a,0,0); pass(a,b,1,0); pass(b,a,0,1); src=a; }
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,W,H); gl.useProgram(pComp.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,scene.t); gl.uniform1i(pComp.u.uScene,0);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,bl[0][0].t); gl.uniform1i(pComp.u.uB1,1);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,bl[2][0].t); gl.uniform1i(pComp.u.uB3,2);
+  gl.uniform2f(pComp.u.uInv,1/W,1/H); gl.uniform1f(pComp.u.uExp,Pe[19]); gl.uniform1f(pComp.u.uWhite,G.white);
+  gl.uniform1f(pComp.u.uBloom,G.bloom); gl.uniform1f(pComp.u.uDim,dimNow); fullTri();
+  gl.activeTexture(gl.TEXTURE0);
+}
+
+// ---------- live mode ----------
+let rec=null;
+function toggleRec(){
+  if(rec){ rec.stop(); rec=null; return; }
+  const chunks=[]; rec=new MediaRecorder(canvas.captureStream(60),{mimeType:'video/webm;codecs=vp9',videoBitsPerSecond:40e6});
+  rec.ondataavailable=e=>chunks.push(e.data);
+  rec.onstop=()=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(chunks,{type:'video/webm'})); a.download='strings-'+Date.now()+'.webm'; a.click(); };
+  rec.start();
+}
+const fullscreen=()=>document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();
+const openPanel=()=>window.open('control.html','strings-control','width=1100,height=960');
+addEventListener('keydown',e=>{
+  if(e.key>='1'&&e.key<=String(SCENES.length)){ go(+e.key-1); G.auto=false; }
+  else if(e.key===' '){ G.auto=!G.auto; e.preventDefault(); }
+  else if(e.key==='ArrowRight') go(cur+1);
+  else if(e.key==='ArrowLeft') go(cur-1);
+  else if(e.key==='f'||e.key==='F') fullscreen();
+  else if(e.key==='h'||e.key==='H') G.hud=!G.hud;
+  else if(e.key==='r'||e.key==='R') toggleRec();
+  else if(e.key==='c'||e.key==='C') openPanel();
+});
+canvas.addEventListener('dblclick',fullscreen);
+const share=(k,v)=>{ G[k]=v; bc&&bc.postMessage({t:'g',k,v}); };   // keep other outputs and the panel on the same values
+canvas.addEventListener('pointermove',e=>{ if(e.buttons&1){ share('yaw',G.yaw-e.movementX*.005); share('camH',Math.max(-3,Math.min(3,G.camH+e.movementY*.008))); } });
+canvas.addEventListener('wheel',e=>{ share('camD',Math.max(.15,Math.min(3,G.camD*Math.exp(e.deltaY*.001)))); e.preventDefault(); },{passive:false});
+
+let bc=null;
+try{ bc=new BroadcastChannel('strings'); }catch(e){}
+const sendState=()=>bc&&bc.postMessage({t:'state',cur,fps:Math.round(fps),G,names:SCENES.map(s=>s.name),n:active(),seg:SEG,w:W,h:H,rec:!!rec,pad:padName,left:Math.max(0,G.dur-sceneT|0)});
+if(bc) bc.onmessage=ev=>{ const m=ev.data||{};
+  if(m.t==='g'&&m.k in G) G[m.k]=m.v;
+  else if(m.t==='camreset') Object.assign(G,CAM0);
+  else if(m.t==='black') G.dim=G.dim<.01?1:0;
+  else if(m.t==='scene'){ go(m.i); if(m.hold) G.auto=false; }
+  else if(m.t==='rec') toggleRec();
+  else if(m.t==='hello') sendState();
+};
+
+// ---------- gamepad: the control panel owns the mapping; outputs only relay raw state in case the panel can't see the pad ----------
+const CAM0={camD:1,camH:0,yaw:0,lookY:0,fov:50};
+let padName='';
+function pollPad(){
+  const gp=[...(navigator.getGamepads?navigator.getGamepads():[])].find(g=>g&&g.connected&&g.mapping==='standard');
+  padName=gp?gp.id:'';
+  if(gp&&bc&&frame%2===0) bc.postMessage({t:'padraw',id:gp.id,a:[...gp.axes],b:gp.buttons.map(x=>x.value)});
+}
+
+let last=performance.now();
+function tick(now){
+  requestAnimationFrame(tick);
+  resize();
+  const dt=Math.min((now-last)/1000,1/20); last=now; if(dt<=0) return;
+  fps+=(1/dt-fps)*.05; sceneT+=dt;
+  if(G.auto&&sceneT>G.dur) go(cur+1);
+  pollPad();
+  dimNow+=(G.dim-dimNow)*(1-Math.exp(-dt/.6));
+  if(G.speed>0) stepSim(dt*G.speed);
+  draw();
+  hud.style.opacity=G.hud?1:0;
+  if(frame%3===0) sendState();
+  if(frame%15===0){
+    hud.innerHTML='<b>'+(cur+1)+' · '+SCENES[cur].name+'</b> '+(G.auto?'· auto '+Math.max(0,G.dur-sceneT|0)+'s':'· hold')+(rec?' · <b style="color:#f55">REC</b>':'')+
+      '<br>'+active()+' strings × '+SEG+' · '+W+'×'+H+' · '+fps.toFixed(0)+' fps<br>1–9 scene · ←/→ · space auto · F fullscreen · C control panel · R record · H hide';
+  }
+}
+
+// ---------- offline export: fixed timestep, every frame sent to server.js → ffmpeg ----------
+async function renderAll(){
+  const fpsOut=+(q.get('fps')||60), secs=+(q.get('secs')||10), warm=+(q.get('warm')||22);
+  const list=(q.get('scenes')||'all')==='all'?SCENES.map((_,i)=>i):q.get('scenes').split(',').map(s=>+s-1);
+  setSize(+(q.get('w')||3840),+(q.get('h')||2160));
+  G.auto=false; G.trans=0;
+  for(const i of list){
+    const name=String(i+1).padStart(2,'0')+'_'+SCENES[i].name.split(' ')[0].toLowerCase();
+    resetSim(); cur=i; T=i*37; frame=0; acc=0; camA=.6+i;
+    for(let k=0;k<warm*30;k++){ stepSim(1/30); if(k%60===0){ gl.flush(); await new Promise(r=>setTimeout(r,0)); } }
+    let r=await fetch(`/start?name=${name}&fps=${fpsOut}`,{method:'POST'}); if(!r.ok) fail('server /start failed');
+    const total=secs*fpsOut;
+    for(let f=0;f<total;f++){
+      stepSim(1/fpsOut); draw();
+      const blob=await new Promise(res=>canvas.toBlob(res,'image/jpeg',.97));
+      r=await fetch('/frame',{method:'POST',body:blob}); if(!r.ok) fail('server /frame failed');
+      if(f%10===0) hud.innerHTML='<b>EXPORT '+name+'</b> '+f+' / '+total;
+    }
+    await fetch('/end',{method:'POST'});
+  }
+  hud.innerHTML='<b>EXPORT DONE</b>'; window.__done=true;
+  await fetch('/done',{method:'POST'});
+}
+if(RENDER) renderAll().catch(e=>fail(String(e))); else requestAnimationFrame(tick);
+</script>
+</body>
+</html>

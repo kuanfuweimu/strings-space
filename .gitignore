@@ -1,0 +1,23 @@
+# Local browser profile and device/session data
+/browser-profile/
+**/browser-profile/
+
+# Generated renders and development captures
+/out/
+/shots/
+*.log
+*.tmp
+
+# Dependencies and local secrets
+node_modules/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
