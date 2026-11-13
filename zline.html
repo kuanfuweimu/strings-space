@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Z-LINE · DENZA Z</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  #wrap{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+  canvas{display:block;max-width:100vw;object-fit:contain;background:#000}
+  #hud{position:fixed;left:16px;bottom:12px;font:12px/1.6 ui-monospace,Consolas,monospace;color:#888;letter-spacing:.05em;user-select:none;white-space:pre}
+  #hud b{color:#ddd;font-weight:500}
+  .tag{position:absolute;font:11px ui-monospace,Consolas,monospace;color:#555;pointer-events:none}
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#f66;font:14px monospace;white-space:pre-wrap;padding:40px}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cw"></canvas><canvas id="cf"></canvas></div>
+<div id="hud"></div>
+<div id="err"></div>
+<script src="zline-engine.js"></script>
+<script src="zline-scenes.js"></script>
+<script>
+'use strict';
+// Query: view=both|wall|floor  scene=1..9  auto=0  hud=0
+//        render=1&secs=20&fps=60&scenes=all  (offline export through server.js; wall 2560x1280, floor 2048x2048)
+const q = new URLSearchParams(location.search);
+const RENDER = q.get('render') === '1';
+const VIEW = q.get('view') || 'both';
+const WALL_W = +(q.get('ww') || 2560), WALL_H = WALL_W / 2, FLOOR_S = +(q.get('fs') || 2048);
+const SUB = 20;                                         // vibration subdivisions per straight segment
+const { SCENES } = ZScenes;
+function fail(m){ const e=document.getElementById('err'); e.style.display='flex'; e.textContent=m; throw new Error(m); }
+
+// ---------- one renderer per surface ----------
+const VS = `#version 300 es
+precision highp float;
+layout(location=0) in vec4 aSeg;    // x0 y0 x1 y1 (surface units)
+layout(location=1) in vec4 aVib;    // amp, phase, fibre seed, arc start
+layout(location=2) in vec4 aCol;    // rgb, brightness
+layout(location=3) in vec4 aW;      // width px
+uniform vec2 uSpan, uRes; uniform float uT, uScale;
+out float vD; out float vHW; out vec3 vCol; out float vA; out float vS; out float vSeed; out float vVib;
+const int SUB=${SUB};
+void main(){
+  int k=gl_VertexID>>1; float side=(gl_VertexID&1)==0?-1.:1.;
+  float u=float(k)/float(SUB);
+  vec2 a=aSeg.xy, b=aSeg.zw, d=b-a; float L=length(d);
+  vec2 t=L>1e-6?d/L:vec2(1.,0.), n=vec2(-t.y,t.x);
+  float env=sin(3.14159265*u);
+  // first + second harmonic of a plucked string; segment ends stay pinned so corners remain sharp
+  float off=aVib.x*(env*sin(aVib.y)+.35*sin(6.2831853*u)*sin(aVib.y*1.83+1.7));
+  vec2 p=a+d*u+n*off;
+  float hw=aW.x*uScale*.5, pad=hw+1.2;                  // +1.2 px for analytic AA
+  gl_Position=vec4(p/uSpan*2.-1.+n*side*pad/uRes*2.,0.,1.);
+  vD=side*pad; vHW=max(hw,.5); vCol=aCol.rgb; vA=aCol.a*min(1.,hw+.5);
+  vS=aVib.w+L*u; vSeed=aVib.z; vVib=clamp(abs(aVib.x)*env/max(L,.02)*8.,0.,1.);
+}`;
+const FS = `#version 300 es
+precision highp float;
+in float vD; in float vHW; in vec3 vCol; in float vA; in float vS; in float vSeed; in float vVib;
+uniform float uT;
+out vec4 o;
+float h(float x){ return fract(sin(x*127.1+311.7)*43758.5453); }
+float vn(float x){ float i=floor(x), f=fract(x); f=f*f*(3.-2.*f); return mix(h(i),h(i+1.),f); }
+void main(){
+  float d=abs(vD);                             // px from the centre line
+  float hw=vHW;
+  float core=clamp(hw+.6-d,0.,1.);             // analytic AA coverage
+  float glow=exp(-d*d/(hw*hw*6.+2.));
+  // brushed / drawn-wire texture along the strand: fine longitudinal grain + travelling glint
+  float grain=.72+.28*vn(vS*900.+vSeed*91.);
+  float gs=h(vSeed*13.7);                      // per-fibre phase and speed: no coherent stripes across parallel lines
+  float glint=pow(.5+.5*sin(vS*(6.+5.*gs)-uT*(1.6+1.6*h(vSeed*3.1))+gs*62.83),28.);
+  float b=vA*(core*grain*(1.+1.6*glint)+.18*glow)*(1.+1.2*vVib);
+  o=vec4(vCol*b,1.);
+}`;
+const VS_Q = `#version 300 es
+void main(){ vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2); gl_Position=vec4(p*2.-1.,0,1); }`;
+const FS_BLUR = `#version 300 es
+precision highp float; uniform sampler2D uTex; uniform vec2 uDir; out vec4 o;
+void main(){ vec2 px=1./vec2(textureSize(uTex,0)), uv=gl_FragCoord.xy*px; vec3 c=texture(uTex,uv).rgb*.227;
+  c+=(texture(uTex,uv+uDir*px*1.385).rgb+texture(uTex,uv-uDir*px*1.385).rgb)*.316;
+  c+=(texture(uTex,uv+uDir*px*3.231).rgb+texture(uTex,uv-uDir*px*3.231).rgb)*.070; o=vec4(c,1.); }`;
+const FS_DOWN = `#version 300 es
+precision highp float; uniform sampler2D uTex; out vec4 o;
+void main(){ vec2 px=1./vec2(textureSize(uTex,0)), uv=(gl_FragCoord.xy*2.)*px;
+  o=vec4((texture(uTex,uv).rgb+texture(uTex,uv+vec2(-px.x,0)).rgb+texture(uTex,uv+vec2(0,-px.y)).rgb+texture(uTex,uv-px).rgb)*.25,1.); }`;
+const FS_COMP = `#version 300 es
+precision highp float;
+uniform sampler2D uA,uB1,uB2,uB3; uniform float uT,uGlitch,uBloom,uExpo; uniform vec3 uTint;
+out vec4 o;
+float h(vec2 p){ return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453); }
+void main(){
+  vec2 R=vec2(textureSize(uA,0)), uv=gl_FragCoord.xy/R;
+  if(uGlitch>0.){                                   // horizontal slice tearing + RGB split
+    float band=floor(uv.y*28.+floor(uT*24.)*3.);
+    float on=step(.72,h(vec2(band,floor(uT*24.))));
+    uv.x+=on*(h(vec2(band,7.))-.5)*.06*uGlitch;
+  }
+  float ca=uGlitch*.004;
+  vec3 c=vec3(texture(uA,uv+vec2(ca,0)).r,texture(uA,uv).g,texture(uA,uv-vec2(ca,0)).b);
+  vec3 bl=texture(uB1,uv).rgb*.55+texture(uB2,uv).rgb*.7+texture(uB3,uv).rgb*.9;
+  c=(c+bl*uBloom)*uExpo;
+  c*=uTint;
+  c=c/(1.+c*.55);                                   // soft shoulder, keeps the silver from clipping flat
+  c=pow(c,vec3(.94));
+  float g=(h(gl_FragCoord.xy+fract(uT)*91.)-.5)/255.;  // dither
+  o=vec4(c+g,1.);
+}`;
+
+function makeSurface(canvas, w, h, span, world, label){
+  canvas.width=w; canvas.height=h;
+  const gl=canvas.getContext('webgl2',{antialias:false,alpha:false,preserveDrawingBuffer:true,powerPreference:'high-performance'});
+  if(!gl) fail('WebGL2 not available'); if(!gl.getExtension('EXT_color_buffer_float')) fail('EXT_color_buffer_float not available');
+  const sh=(t,s)=>{ const o=gl.createShader(t); gl.shaderSource(o,s); gl.compileShader(o); if(!gl.getShaderParameter(o,gl.COMPILE_STATUS)) fail(gl.getShaderInfoLog(o)); return o; };
+  const prog=(v,f)=>{ const p=gl.createProgram(); gl.attachShader(p,sh(gl.VERTEX_SHADER,v)); gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f)); gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) fail(gl.getProgramInfoLog(p)); const u={}; const n=gl.getProgramParameter(p,gl.ACTIVE_UNIFORMS);
+    for(let i=0;i<n;i++){ const a=gl.getActiveUniform(p,i); u[a.name]=gl.getUniformLocation(p,a.name); } return {p,u}; };
+  const P={line:prog(VS,FS),blur:prog(VS_Q,FS_BLUR),down:prog(VS_Q,FS_DOWN),comp:prog(VS_Q,FS_COMP)};
+  const tex=(tw,th)=>{ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t); gl.texStorage2D(gl.TEXTURE_2D,1,gl.RGBA16F,tw,th);
+    for(const [k,v] of [[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR],[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D,k,v);
+    const f=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0); return {t,f,w:tw,h:th}; };
+  // 4x MSAA scene buffer resolved into A, plus a bloom pyramid
+  const ms=gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER,ms); gl.renderbufferStorageMultisample(gl.RENDERBUFFER,4,gl.RGBA16F,w,h);
+  const msf=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,msf); gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.RENDERBUFFER,ms);
+  const A=tex(w,h), L=[]; let lw=w, lh=h;
+  for(let i=0;i<3;i++){ lw=Math.max(1,lw>>1); lh=Math.max(1,lh>>1); L.push([tex(lw,lh),tex(lw,lh)]); }
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  const STR=ZLine.FLOATS*4;
+  for(let i=0;i<4;i++){ gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i,4,gl.FLOAT,false,STR,i*16); gl.vertexAttribDivisor(i,1); }
+  const empty=gl.createVertexArray();
+  const pass=(p,dst,vw,vh)=>{ gl.useProgram(p.p); gl.bindFramebuffer(gl.FRAMEBUFFER,dst); gl.viewport(0,0,vw,vh); gl.bindVertexArray(empty); };
+  const bindT=(p,name,unit,t)=>{ gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,t); gl.uniform1i(p.u[name],unit); };
+  return {
+    canvas,w,h,world,label,
+    draw(t,look){
+      const n=world.emit(look.gain);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,msf); gl.viewport(0,0,w,h); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+      if(n){
+        gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER,buf); gl.bufferData(gl.ARRAY_BUFFER,world.buf.subarray(0,n*ZLine.FLOATS),gl.STREAM_DRAW);
+        gl.useProgram(P.line.p); gl.uniform2f(P.line.u.uSpan,span[0],span[1]); gl.uniform2f(P.line.u.uRes,w,h); gl.uniform1f(P.line.u.uT,t);
+        gl.uniform1f(P.line.u.uScale,h/1280*look.width);   // widths scale with resolution: preview and export look the same
+        gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,(SUB+1)*2,n);
+        gl.disable(gl.BLEND);
+      }
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER,msf); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,A.f); gl.blitFramebuffer(0,0,w,h,0,0,w,h,gl.COLOR_BUFFER_BIT,gl.NEAREST);
+      let src=A;
+      for(const [a,b] of L){
+        pass(P.down,a.f,a.w,a.h); bindT(P.down,'uTex',0,src.t); gl.drawArrays(gl.TRIANGLES,0,3);
+        pass(P.blur,b.f,b.w,b.h); bindT(P.blur,'uTex',0,a.t); gl.uniform2f(P.blur.u.uDir,1,0); gl.drawArrays(gl.TRIANGLES,0,3);
+        pass(P.blur,a.f,a.w,a.h); bindT(P.blur,'uTex',0,b.t); gl.uniform2f(P.blur.u.uDir,0,1); gl.drawArrays(gl.TRIANGLES,0,3);
+        src=a;
+      }
+      pass(P.comp,null,w,h);
+      bindT(P.comp,'uA',0,A.t); bindT(P.comp,'uB1',1,L[0][0].t); bindT(P.comp,'uB2',2,L[1][0].t); bindT(P.comp,'uB3',3,L[2][0].t);
+      gl.uniform1f(P.comp.u.uT,t); gl.uniform1f(P.comp.u.uGlitch,look.glitch); gl.uniform1f(P.comp.u.uBloom,look.bloom); gl.uniform1f(P.comp.u.uExpo,look.expo);
+      gl.uniform3f(P.comp.u.uTint,...look.tint);
+      gl.drawArrays(gl.TRIANGLES,0,3);
+    }
+  };
+}
+
+// ---------- scene state ----------
+const cw=document.getElementById('cw'), cf=document.getElementById('cf'), hud=document.getElementById('hud');
+const prev = RENDER ? 1 : +(q.get('scale') || .5);
+let wall, floor, cur=Math.max(0,Math.min(SCENES.length-1,(+(q.get('scene')||1))-1)), sceneT=0, ctx=null;
+let auto=q.get('auto')!=='0', showHud=q.get('hud')!=='0' && !RENDER;
+function setup(ww,fs){
+  const Ww=new ZLine.World(), Wf=new ZLine.World();
+  wall = VIEW==='floor'? null : makeSurface(cw,ww,ww/2,[2,1],Ww,'WALL');
+  floor= VIEW==='wall' ? null : makeSurface(cf,fs,fs,[1,1],Wf,'FLOOR');
+  if(!wall) cw.style.display='none'; if(!floor) cf.style.display='none';
+  return {Ww,Wf};
+}
+let worlds;
+function load(i){
+  cur=(i+SCENES.length)%SCENES.length; sceneT=0;
+  worlds.Ww.strings.length=0; worlds.Wf.strings.length=0;
+  ctx={W:worlds.Ww,F:worlds.Wf,glitch:0};
+  SCENES[cur].build(ctx);
+  SCENES[cur].update(ctx,0);
+  for(const s of [...worlds.Ww.strings,...worlds.Wf.strings]){ s.settle(); }
+}
+function look(){
+  const sc=SCENES[cur], fadeOut=RENDER?1:Math.min(1,Math.max(0,(sc.dur-sceneT)/.6));
+  const fade=Math.min(1,sceneT/.4)*(auto?fadeOut:1);
+  return {gain:fade,glitch:ctx.glitch||0,bloom:.85,expo:1,width:1,tint:[1,1,1]};
+}
+function step(dt){
+  sceneT+=dt; SCENES[cur].update(ctx,sceneT);
+  worlds.Ww.step(dt,6); worlds.Wf.step(dt,6);
+}
+function layout(){
+  if(RENDER) return;
+  const vw=innerWidth, vh=innerHeight-24;
+  if(VIEW==='both'){
+    // wall on top (2:1), floor below (1:1)
+    const wallH=Math.min(vw/2,vh*.5), floorH=Math.min(vh-wallH-10,vw);
+    cw.style.width=wallH*2+'px'; cw.style.height=wallH+'px'; cf.style.width=floorH+'px'; cf.style.height=floorH+'px';
+  }else if(VIEW==='wall'){ const H=Math.min(vw/2,vh); cw.style.width=H*2+'px'; cw.style.height=H+'px'; }
+  else { const S=Math.min(vw,vh); cf.style.width=S+'px'; cf.style.height=S+'px'; }
+}
+
+// ---------- live ----------
+let last=performance.now(), fps=60, acc=0;
+function tick(now){
+  const dt=Math.min(.05,(now-last)/1000); last=now; fps=fps*.95+.05/Math.max(dt,1e-3);
+  acc+=dt; const H=1/120; let k=0;
+  if(window.__pause) acc=0;
+  while(acc>=H&&k<8){ step(H); acc-=H; k++; } if(k===8) acc=0;
+  if(auto&&sceneT>SCENES[cur].dur) load(cur+1);
+  const L=look(); if(wall) wall.draw(sceneT,L); if(floor) floor.draw(sceneT,L);
+  hud.style.display=showHud?'block':'none';
+  if(showHud) hud.innerHTML='<b>'+(cur+1)+' · '+SCENES[cur].name+'</b>  '+(auto?'auto '+Math.max(0,SCENES[cur].dur-sceneT|0)+'s':'hold')+
+    '\nWALL '+(wall?wall.w+'×'+wall.h:'—')+' (2:1, 折角在中线)  FLOOR '+(floor?floor.w+'×'+floor.h:'—')+'  '+fps.toFixed(0)+' fps'+
+    '\n1–9 场景 · ←/→ · 空格 auto · R 重播 · H 信息 · F 全屏';
+  requestAnimationFrame(tick);
+}
+addEventListener('keydown',e=>{
+  if(e.key>='1'&&e.key<='9') load(+e.key-1);
+  else if(e.key==='ArrowRight') load(cur+1); else if(e.key==='ArrowLeft') load(cur-1);
+  else if(e.key===' '){ auto=!auto; e.preventDefault(); } else if(e.key==='r'||e.key==='R') load(cur);
+  else if(e.key==='h'||e.key==='H') showHud=!showHud; else if(e.key==='f'||e.key==='F') document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();
+});
+addEventListener('resize',layout);
+
+// ---------- offline export: fixed timestep; wall and floor written as separate files ----------
+async function post(path,body){ const r=await fetch(path,{method:'POST',body}); if(!r.ok) fail('server '+path+' failed'); }
+async function renderAll(){
+  const fpsOut=+(q.get('fps')||60), secsQ=q.get('secs');
+  const list=(q.get('scenes')||'all')==='all'?SCENES.map((_,i)=>i):q.get('scenes').split(',').map(s=>+s-1);
+  const stills=q.get('stills');                                        // e.g. stills=4,9,15 → PNG frames only
+  const tag=q.get('tag')||'zline';
+  for(const i of list){
+    const secs=secsQ?+secsQ:SCENES[i].dur, base=tag+'_'+String(i+1).padStart(2,'0')+'_'+SCENES[i].name.split(' ')[0].toLowerCase();
+    for(const surf of [wall,floor].filter(Boolean)){
+      const name=base+'_'+surf.label.toLowerCase()+'_'+surf.w+'x'+surf.h;
+      load(i); const total=Math.round(secs*fpsOut), sub=Math.max(1,Math.round(120/fpsOut));
+      const snaps=stills?stills.split(',').map(s=>Math.round(+s*fpsOut)):null;
+      if(!snaps) await post(`/start?name=${name}&fps=${fpsOut}`);
+      for(let f=0;f<total;f++){
+        for(let k=0;k<sub;k++) step(1/fpsOut/sub);
+        if(snaps&&!snaps.includes(f)) continue;
+        surf.draw(sceneT,look());
+        if(snaps){ const b=await new Promise(r=>surf.canvas.toBlob(r,'image/png')); await post(`/still?name=${name}_t${(f/fpsOut).toFixed(1)}`,b); continue; }
+        const b=await new Promise(r=>surf.canvas.toBlob(r,'image/jpeg',.97)); await post('/frame',b);
+        if(f%30===0) document.title=name+' '+f+'/'+total;
+      }
+      if(!snaps) await post('/end');
+    }
+  }
+  window.__done=true; await post('/done');
+}
+
+// Debug/preview: jump to scene i (1-based) at time t, simulated with the export timestep, then hold.
+// Debug: render scene i at time t and post both surfaces as PNG stills to server.js (/still → out/).
+window.__still=async(i,t,tag='chk')=>{ window.__pause=true; __seek(i,t); const L=look(), names=[];
+  for(const s of [wall,floor].filter(Boolean)){ s.draw(sceneT,L); const b=await new Promise(r=>s.canvas.toBlob(r,'image/png'));
+    const n=`${tag}_${String(i).padStart(2,'0')}_${s.label.toLowerCase()}_t${t}`; await post('/still?name='+n,b); names.push(n); }
+  return names; };
+window.__seek=(i,t)=>{ auto=false; load(i-1); const n=Math.round(t*120); for(let k=0;k<n;k++) step(1/120); return SCENES[cur].name; };
+worlds=setup(Math.round(WALL_W*prev/2)*2, Math.round(FLOOR_S*prev));
+load(cur);
+layout();
+if(RENDER) renderAll().catch(e=>fail(String(e))); else requestAnimationFrame(tick);
+</script>
+</body>
+</html>

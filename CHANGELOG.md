@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.0 — 2026-11-14
+
+- 新增 `zline.html` 直线折角版本，由 `zline-engine.js` 和 `zline-scenes.js` 实现。线条全部为直线段与折角，节点用欠阻尼弹簧追随编舞目标，产生回弹；拉长时细丝散开形成拉丝，长度突变时产生弹拨振动，折角两端保持固定。
+- 墙面与地面分开输出：墙面 2:1（2560×1280，90° 折角位于中线），地面 1:1（2048×2048）。两者共用时间轴。
+- 新增 9 个场景，对应 DENZA Z breakdown：ORIGIN、AXIS、PARALLEL、WEAVE、ARRAY、Z-FORM、TETHER、TIRE、FIELD。
+- 新增 `export-zline.ps1` 离线导出脚本；`server.js` 增加 `/still` PNG 静帧接口。
+- 新增 `tests/zline.test.js`，覆盖弹簧回弹、振动衰减，以及全部场景无 NaN。原 `index.html` 未改动。
+
 ## v1.0.0 — 2026-11-12
 
 STRINGS SPACE 的首个独立仓库版本，发布于 `kuanfuweimu/strings-space` 的 `main` 分支。原 `kuanfuweimu/strings-web` 仓库继续保留。

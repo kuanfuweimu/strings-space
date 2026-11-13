@@ -36,6 +36,11 @@ http.createServer(async (req, res) => {
       if (ff) { ff.stdin.end(); const code = await ff.closed; console.log('end', frames, 'frames, ffmpeg exit', code); ff = null; }
       return res.end('ok');
     }
+    if (req.method === 'POST' && u.pathname === '/still') {   // single PNG frame (zline.html ?stills=)
+      const name = (u.searchParams.get('name') || 'still').replace(/[^\w.-]/g, '');
+      fs.writeFileSync(path.join(OUT, name + '.png'), await body(req));
+      return res.end('ok');
+    }
     if (req.method === 'POST' && u.pathname === '/done') { res.end('ok'); console.log('done'); if (process.env.EXIT_ON_DONE) setTimeout(() => process.exit(0), 200); return; }
     const rel = decodeURIComponent(u.pathname === '/' ? '/index.html' : u.pathname);
     const file = path.join(ROOT, rel);
